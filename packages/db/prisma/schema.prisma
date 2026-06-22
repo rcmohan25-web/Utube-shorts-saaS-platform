@@ -1,0 +1,328 @@
+// packages/db/prisma/schema.prisma
+// Shared-schema multi-tenancy: every tenant-owned table carries organizationId.
+// ADR-001: shared schema chosen over per-tenant DBs for operational simplicity at <1000 tenants.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum Plan {
+  STARTER
+  CREATOR
+  AGENCY
+  ENTERPRISE
+}
+
+enum VideoStatus {
+  PENDING
+  DOWNLOADING
+  DOWNLOADED
+  TRANSCRIBING
+  READY
+  FAILED
+}
+
+enum ClipStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ShortStatus {
+  RENDERING
+  REVIEW
+  APPROVED
+  REJECTED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+}
+
+enum ScheduleStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum SubStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  TRIALING
+  UNPAID
+}
+
+enum EventType {
+  SHORT_GENERATED
+  SHORT_PUBLISHED
+  VIDEO_IMPORTED
+}
+
+model Organization {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+  plan                Plan     @default(STARTER)
+  quotaShortsPerMonth Int      @default(50)
+  stripeCustomerId    String?  @unique
+  logoS3Key           String?
+  brandColor          String?
+  webhookUrl          String?
+  onboardingStep      Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  users         User[]
+  channels      Channel[]
+  videos        Video[]
+  clips         Clip[]
+  shorts        Short[]
+  schedules     Schedule[]
+  subscriptions Subscription[]
+  usageEvents   UsageEvent[]
+  analytics     AnalyticsDaily[]
+  auditLogs     AuditLog[]
+}
+
+model User {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String    @unique
+  passwordHash   String
+  name           String
+  role           UserRole  @default(VIEWER)
+  emailVerified  Boolean   @default(false)
+  ytAccessToken  String? // AES-256-GCM encrypted
+  ytRefreshToken String? // AES-256-GCM encrypted
+  ytTokenExpiry  DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  channels      Channel[]
+  refreshTokens RefreshToken[]
+
+  @@index([organizationId, role])
+}
+
+// Required by the auth spec ("bcrypt-hashed in refresh_tokens table") but not
+// in the original combined schema doc — added here so token rotation is real.
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Channel {
+  id               String   @id @default(cuid())
+  organizationId   String
+  userId           String
+  youtubeChannelId String   @unique
+  name             String
+  thumbnailUrl     String?
+  subscriberCount  Int?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  videos       Video[]
+  shorts       Short[]
+  schedules    Schedule[]
+
+  @@index([organizationId])
+}
+
+model Video {
+  id                String      @id @default(cuid())
+  organizationId    String
+  channelId         String
+  youtubeUrl        String
+  youtubeVideoId    String
+  title             String
+  durationSeconds   Int?
+  thumbnailUrl      String?
+  status            VideoStatus @default(PENDING)
+  rawVideoS3Key     String?
+  audioS3Key        String?
+  transcriptS3Key   String?
+  errorMessage      String?
+  processingStarted DateTime?
+  processingEnded   DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  channel      Channel      @relation(fields: [channelId], references: [id])
+  clips        Clip[]
+
+  @@unique([youtubeVideoId, organizationId])
+  @@index([organizationId, status])
+  @@index([channelId])
+}
+
+model Clip {
+  id                String     @id @default(cuid())
+  organizationId    String
+  videoId           String
+  startSeconds      Float
+  endSeconds        Float
+  durationSeconds   Float
+  confidenceScore   Float      @default(0)
+  transcriptSegment String?
+  aiReasoning       String?
+  suggestedTitle    String?
+  suggestedHashtags String[]
+  status            ClipStatus @default(PENDING)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  video  Video   @relation(fields: [videoId], references: [id])
+  shorts Short[]
+
+  @@index([videoId, confidenceScore(sort: Desc)])
+  @@index([organizationId, status])
+}
+
+model Short {
+  id              String      @id @default(cuid())
+  organizationId  String
+  clipId          String
+  channelId       String
+  title           String
+  description     String?
+  tags            String[]
+  status          ShortStatus @default(RENDERING)
+  renderS3Key     String?
+  thumbnailS3Key  String?
+  captionS3Key    String?
+  youtubeVideoId  String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  renderStarted   DateTime?
+  renderEnded     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  clip         Clip             @relation(fields: [clipId], references: [id])
+  channel      Channel          @relation(fields: [channelId], references: [id])
+  schedules    Schedule[]
+  analytics    AnalyticsDaily[]
+
+  @@index([organizationId, status])
+  @@index([channelId])
+}
+
+model Schedule {
+  id             String         @id @default(cuid())
+  organizationId String
+  shortId        String
+  channelId      String
+  scheduledAt    DateTime
+  publishedAt    DateTime?
+  youtubeVideoId String?
+  status         ScheduleStatus @default(PENDING)
+  retryCount     Int            @default(0)
+  lastError      String?
+  bullJobId      String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  short        Short        @relation(fields: [shortId], references: [id])
+  channel      Channel      @relation(fields: [channelId], references: [id])
+
+  @@index([scheduledAt, status])
+  @@index([organizationId])
+}
+
+model Subscription {
+  id                   String    @id @default(cuid())
+  organizationId       String    @unique
+  stripeSubscriptionId String    @unique
+  plan                 Plan
+  status               SubStatus
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+model UsageEvent {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String?
+  eventType      EventType
+  resourceId     String?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, eventType, createdAt])
+}
+
+model AnalyticsDaily {
+  id                String   @id @default(cuid())
+  organizationId    String
+  shortId           String
+  date              DateTime @db.Date
+  views             Int      @default(0)
+  watchTimeSeconds  Int      @default(0)
+  likes             Int      @default(0)
+  comments          Int      @default(0)
+  shares            Int      @default(0)
+  clickThroughRate  Float?
+  subscribersGained Int      @default(0)
+  estimatedRevenue  Float?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  short        Short        @relation(fields: [shortId], references: [id])
+
+  @@unique([shortId, date])
+  @@index([organizationId, date])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String
+  resourceType   String?
+  resourceId     String?
+  metadata       Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+}

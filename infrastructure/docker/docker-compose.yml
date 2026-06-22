@@ -1,0 +1,42 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shorts_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports: ["6379:6379"]
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports: ["5050:80"]
+
+  bull-board:
+    image: deadly0/bull-board
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports: ["3030:3000"]
+
+  clip-worker:
+    build: ../../services/clip-worker
+    ports: ["8002:8002"]
+    depends_on: [redis]
+
+volumes:
+  postgres_data:
