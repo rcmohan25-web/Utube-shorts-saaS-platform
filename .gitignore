@@ -10,3 +10,22 @@ dist/
 /tmp
 __pycache__/
 *.pyc
+
+# Prevent committing environment and credential files
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.crt
+*.pfx
+*.asc
+.aws/
+.credentials
+.secret
+.secrets
+.vscode/
+.idea/
+venv/
+env/
+/.venv/
