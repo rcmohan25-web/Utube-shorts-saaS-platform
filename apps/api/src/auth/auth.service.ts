@@ -171,7 +171,10 @@ export class AuthService {
       include: { organization: true },
     });
     if (!user) throw new UnauthorizedException();
-    const { passwordHash, ytAccessToken, ytRefreshToken, ...safe } = user;
+    const safe = { ...user } as Record<string, unknown>;
+    delete safe.passwordHash;
+    delete safe.ytAccessToken;
+    delete safe.ytRefreshToken;
     return safe;
   }
 }
