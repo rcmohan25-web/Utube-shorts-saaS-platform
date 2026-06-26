@@ -50,10 +50,11 @@ export class VideosService {
     });
 
     // jobId makes re-adding the same import a no-op — BullMQ deduplicates for us.
+    // Use underscore instead of colon (BullMQ doesn't allow colons in job IDs).
     await this.downloadQueue.add(
       'download',
       { videoId: video.id, youtubeUrl: dto.youtubeUrl, organizationId },
-      { jobId: `download:${video.id}`, attempts: 3, backoff: { type: 'exponential', delay: 30_000 } },
+      { jobId: `download_${video.id}`, attempts: 3, backoff: { type: 'exponential', delay: 30_000 } },
     );
 
     await this.prisma.client.usageEvent.create({
@@ -102,7 +103,7 @@ export class VideosService {
       await this.transcriptionQueue.add(
         'transcribe',
         { videoId: id, audioS3Key: dto.audioS3Key, organizationId: dto.organizationId },
-        { jobId: `transcribe:${id}`, attempts: 2, backoff: { type: 'exponential', delay: 30_000 } },
+        { jobId: `transcribe_${id}`, attempts: 2, backoff: { type: 'exponential', delay: 30_000 } },
       );
     }
 

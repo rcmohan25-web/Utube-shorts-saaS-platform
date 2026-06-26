@@ -35,6 +35,11 @@ services:
 
   clip-worker:
     build: ../../services/clip-worker
+    env_file:
+      - ../../services/clip-worker/.env
+    environment:
+      API_BASE_URL: http://host.docker.internal:3001/api/v1
+      REDIS_HOST: redis
     ports: ["8002:8002"]
     depends_on: [redis]
 
