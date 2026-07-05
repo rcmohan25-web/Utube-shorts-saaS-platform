@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
 import { VideosService } from './videos.service';
 import { VideosController } from './videos.controller';
-import { YoutubeService } from '../youtube/youtube.service';
+import { YoutubeModule } from '../youtube/youtube.module';
+import { WebsocketsModule } from '../websockets/websockets.module';
+import { ClipsModule } from '../clips/clips.module';
 
 @Module({
-  providers: [VideosService, YoutubeService],
+  imports: [YoutubeModule, WebsocketsModule, ClipsModule],
+  providers: [VideosService],
   controllers: [VideosController],
   exports: [VideosService],
 })

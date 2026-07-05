@@ -1,5 +1,9 @@
 import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { VideoDownloadProcessor } from './processors/video-download.processor';
+import { TranscriptionProcessor } from './processors/transcription.processor';
+import { ClipDetectionProcessor } from './processors/clip-detection.processor';
+import { RenderProcessor } from './processors/render.processor';
 
 // Global so any feature module can @InjectQueue() without re-importing.
 // Queue names + concurrency/retry policy match §7.1 of the spec.
@@ -32,6 +36,10 @@ export const QUEUE_NAMES = {
       { name: QUEUE_NAMES.NOTIFICATION },
     ),
   ],
+  // Workers that consume jobs and dispatch them to the Python services over
+  // HTTP (ADR-002). publish processor lands in the next PR alongside
+  // publish-worker.
+  providers: [VideoDownloadProcessor, TranscriptionProcessor, ClipDetectionProcessor, RenderProcessor],
   exports: [BullModule],
 })
 export class QueueModule {}

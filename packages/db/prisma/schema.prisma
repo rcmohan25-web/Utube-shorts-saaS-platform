@@ -196,6 +196,7 @@ model Clip {
   suggestedTitle    String?
   suggestedHashtags String[]
   status            ClipStatus @default(PENDING)
+  rejectionReason   String? // added in PR 3 — why a human rejected this clip
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -223,6 +224,7 @@ model Short {
   reviewedBy      String?
   reviewedAt      DateTime?
   rejectionReason String?
+  errorMessage    String? // added in PR 3 — why render-worker reported FAILED
   renderStarted   DateTime?
   renderEnded     DateTime?
   createdAt       DateTime    @default(now())

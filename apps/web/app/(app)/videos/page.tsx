@@ -1,7 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, useCallback } from 'react';
 import { apiFetch, ApiError } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
+import type { VideoStatusEvent } from '@shorts/shared';
 
 type Video = {
   id: string;
@@ -29,6 +32,7 @@ export default function VideosPage() {
   const [channelId, setChannelId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [live, setLive] = useState(false);
 
   const refresh = useCallback(() => {
     apiFetch<Video[]>('/videos').then(setVideos).catch(() => {});
@@ -42,11 +46,27 @@ export default function VideosPage() {
         if (cs[0]) setChannelId(cs[0].id);
       })
       .catch(() => {});
-
-    // No WebSocket gateway yet (that's §8.3 / Day 6) — poll every 5s in the meantime.
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
   }, [refresh]);
+
+  // §8.3 video:status over WebSocket, org-scoped server-side — replaces the
+  // old 5s polling loop. Each event patches just the row that changed.
+  useEffect(() => {
+    const socket = getSocket();
+
+    function onStatus(event: VideoStatusEvent) {
+      setVideos((prev) => prev.map((v) => (v.id === event.videoId ? { ...v, status: event.status } : v)));
+    }
+
+    socket.on('connect', () => setLive(true));
+    socket.on('disconnect', () => setLive(false));
+    socket.on('video:status', onStatus);
+
+    return () => {
+      socket.off('video:status', onStatus);
+      socket.off('connect');
+      socket.off('disconnect');
+    };
+  }, []);
 
   async function onImport(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +92,13 @@ export default function VideosPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Videos</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Videos</h1>
+        <span className={`flex items-center gap-1.5 text-xs ${live ? 'text-emerald-400' : 'text-white/30'}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-emerald-400' : 'bg-white/30'}`} />
+          {live ? 'Live' : 'Connecting…'}
+        </span>
+      </div>
 
       <form onSubmit={onImport} className="flex gap-2">
         <input
@@ -105,7 +131,11 @@ export default function VideosPage() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {videos.map((v) => (
-          <div key={v.id} className="overflow-hidden rounded-xl border border-white/10 bg-white/5">
+          <Link
+            key={v.id}
+            href={`/videos/${v.id}`}
+            className="overflow-hidden rounded-xl border border-white/10 bg-white/5 hover:border-brand-500"
+          >
             <div className="aspect-video bg-black/40">
               {v.thumbnailUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -118,7 +148,7 @@ export default function VideosPage() {
                 {v.status}
               </span>
             </div>
-          </div>
+          </Link>
         ))}
         {videos.length === 0 && (
           <p className="col-span-full text-sm text-white/40">
