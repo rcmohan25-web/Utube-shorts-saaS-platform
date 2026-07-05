@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseInterceptors } from '@nestjs/common';
 import { UserRole } from '@shorts/db';
 import { Roles } from '../common/decorators/roles.decorator';
 import { TenantInterceptor } from '../common/interceptors/tenant.interceptor';
@@ -20,5 +20,11 @@ export class ChannelsController {
   @Get()
   findAll(@Req() req: AuthenticatedRequest) {
     return this.channels.findAll(req.organizationId);
+  }
+
+  @Patch(':id/disconnect')
+  @Roles(UserRole.ADMIN, UserRole.OWNER) // disconnecting channels is Admin+ per §9.2
+  disconnect(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.channels.disconnect(id, req.organizationId);
   }
 }

@@ -5,10 +5,12 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { YoutubeModule } from '../youtube/youtube.module';
 
 @Module({
   imports: [
     PassportModule,
+    YoutubeModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

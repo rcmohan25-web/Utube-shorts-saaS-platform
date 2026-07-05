@@ -43,5 +43,21 @@ services:
     ports: ["8002:8002"]
     depends_on: [redis]
 
+  transcription-worker:
+    build: ../../services/transcription-worker
+    env_file:
+      - ../../services/transcription-worker/.env
+    environment:
+      API_BASE_URL: http://host.docker.internal:3001/api/v1
+    ports: ["8001:8001"]
+
+  render-worker:
+    build: ../../services/render-worker
+    env_file:
+      - ../../services/render-worker/.env
+    environment:
+      API_BASE_URL: http://host.docker.internal:3001/api/v1
+    ports: ["8003:8003"]
+
 volumes:
   postgres_data:

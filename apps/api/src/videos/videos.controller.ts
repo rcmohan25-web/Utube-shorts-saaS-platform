@@ -22,12 +22,17 @@ import type { AuthenticatedRequest } from '../common/decorators/current-user.dec
 import { VideosService } from './videos.service';
 import { ImportVideoDto } from './dto/import-video.dto';
 import { VideoStatusCallbackDto } from './dto/video-status-callback.dto';
+import { ClipsService } from '../clips/clips.service';
+import { CreateClipsDto } from '../clips/dto/create-clips.dto';
 
 @ApiTags('videos')
 @Controller('videos')
 @UseInterceptors(TenantInterceptor)
 export class VideosController {
-  constructor(private videos: VideosService) {}
+  constructor(
+    private videos: VideosService,
+    private clips: ClipsService,
+  ) {}
 
   @Post()
   @Roles(UserRole.EDITOR, UserRole.ADMIN, UserRole.OWNER)
@@ -52,5 +57,15 @@ export class VideosController {
   @Patch(':id/status')
   applyStatusCallback(@Param('id') id: string, @Body() dto: VideoStatusCallbackDto) {
     return this.videos.applyStatusCallback(id, dto);
+  }
+
+  // clip-worker -> API callback after GPT-4o scoring (§6.2). Lives here
+  // (rather than on ClipsController) since the URL is a sub-resource of
+  // /videos; ClipsService itself stays in the clips module.
+  @Public()
+  @UseGuards(InternalSecretGuard)
+  @Post(':id/clips')
+  createClips(@Param('id') id: string, @Body() dto: CreateClipsDto) {
+    return this.clips.createFromWorker(id, dto);
   }
 }

@@ -5,17 +5,32 @@ import { EventType, VideoStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { QUEUE_NAMES } from '../queues/queue.module';
 import { YoutubeService, extractYoutubeId } from '../youtube/youtube.service';
+import { VideoGateway } from '../websockets/video.gateway';
 import { ImportVideoDto } from './dto/import-video.dto';
 import { VideoStatusCallbackDto } from './dto/video-status-callback.dto';
 import { transitionVideo } from './video-status.machine';
+
+// Coarse progress mapping for the WebSocket payload (§8.3) — not meant to be
+// frame-accurate, just enough for a progress bar that visibly moves between
+// pipeline stages without each worker having to report granular percentages.
+const STAGE_PROGRESS: Record<string, number> = {
+  PENDING: 0,
+  DOWNLOADING: 20,
+  DOWNLOADED: 40,
+  TRANSCRIBING: 60,
+  READY: 100,
+  FAILED: 100,
+};
 
 @Injectable()
 export class VideosService {
   constructor(
     private prisma: PrismaService,
     private youtube: YoutubeService,
+    private videoGateway: VideoGateway,
     @InjectQueue(QUEUE_NAMES.VIDEO_DOWNLOAD) private downloadQueue: Queue,
     @InjectQueue(QUEUE_NAMES.TRANSCRIPTION) private transcriptionQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.CLIP_DETECTION) private clipDetectionQueue: Queue,
   ) {}
 
   // §20.1 pattern: validate -> fetch metadata -> upsert (idempotent) -> dispatch job -> log usage.
@@ -50,7 +65,6 @@ export class VideosService {
     });
 
     // jobId makes re-adding the same import a no-op — BullMQ deduplicates for us.
-    // Use underscore instead of colon (BullMQ doesn't allow colons in job IDs).
     await this.downloadQueue.add(
       'download',
       { videoId: video.id, youtubeUrl: dto.youtubeUrl, organizationId },
@@ -64,6 +78,12 @@ export class VideosService {
         eventType: EventType.VIDEO_IMPORTED,
         resourceId: video.id,
       },
+    });
+
+    this.videoGateway.emitVideoStatus(organizationId, {
+      videoId: video.id,
+      status: video.status,
+      progress: STAGE_PROGRESS[video.status],
     });
 
     return video;
@@ -85,7 +105,7 @@ export class VideosService {
     return video;
   }
 
-  // Called by the Python clip-worker via PATCH /videos/:id/status (internal secret, no JWT).
+  // Called by Python workers via PATCH /videos/:id/status (internal secret, no JWT).
   // The worker has no JWT/org context, so organizationId travels in the callback body instead.
   async applyStatusCallback(id: string, dto: VideoStatusCallbackDto) {
     if (!dto.organizationId) throw new BadRequestException('organizationId is required');
@@ -98,12 +118,37 @@ export class VideosService {
       processingEnded: dto.status === 'READY' || dto.status === 'FAILED' ? new Date() : undefined,
     });
 
+    // §8.3 — every pipeline stage change pushed live, org-scoped. This is
+    // what lets the frontend drop its 5s polling loop.
+    this.videoGateway.emitVideoStatus(dto.organizationId, {
+      videoId: id,
+      status: video.status,
+      progress: STAGE_PROGRESS[video.status],
+    });
+
     // Chain the pipeline: DOWNLOADED -> kick off transcription.
     if (dto.status === 'DOWNLOADED') {
       await this.transcriptionQueue.add(
         'transcribe',
         { videoId: id, audioS3Key: dto.audioS3Key, organizationId: dto.organizationId },
         { jobId: `transcribe_${id}`, attempts: 2, backoff: { type: 'exponential', delay: 30_000 } },
+      );
+    }
+
+    // Chain the pipeline: READY (transcript done) -> kick off clip detection
+    // (scene detection + GPT-4o scoring, §6.1 stages 5-6).
+    if (dto.status === 'READY') {
+      await this.clipDetectionQueue.add(
+        'detect-clips',
+        {
+          videoId: id,
+          organizationId: dto.organizationId,
+          rawVideoS3Key: video.rawVideoS3Key,
+          audioS3Key: video.audioS3Key,
+          transcriptS3Key: video.transcriptS3Key,
+          videoTitle: video.title,
+        },
+        { jobId: `detect-clips_${id}`, attempts: 2, backoff: { type: 'exponential', delay: 30_000 } },
       );
     }
 
