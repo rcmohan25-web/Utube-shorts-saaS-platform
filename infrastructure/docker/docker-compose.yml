@@ -16,7 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
     ports: ["6379:6379"]
 
   pgadmin:
@@ -58,6 +58,14 @@ services:
     environment:
       API_BASE_URL: http://host.docker.internal:3001/api/v1
     ports: ["8003:8003"]
+
+  publish-worker:
+    build: ../../services/publish-worker
+    env_file:
+      - ../../services/publish-worker/.env
+    environment:
+      API_BASE_URL: http://host.docker.internal:3001/api/v1
+    ports: ["8004:8004"]
 
 volumes:
   postgres_data:

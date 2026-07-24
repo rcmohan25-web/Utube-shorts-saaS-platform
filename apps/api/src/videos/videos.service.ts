@@ -45,24 +45,35 @@ export class VideosService {
 
     const meta = await this.youtube.getVideoMeta(youtubeId);
 
-    const video = await this.prisma.client.video.upsert({
+    const existingVideo = await this.prisma.client.video.findUnique({
       where: { youtubeVideoId_organizationId: { youtubeVideoId: youtubeId, organizationId } },
-      create: {
-        organizationId,
-        channelId: dto.channelId,
-        youtubeUrl: dto.youtubeUrl,
-        youtubeVideoId: youtubeId,
-        title: meta.title,
-        durationSeconds: meta.durationSeconds,
-        thumbnailUrl: meta.thumbnailUrl,
-        status: VideoStatus.PENDING,
-      },
-      update: {
-        status: VideoStatus.PENDING,
-        errorMessage: null,
-        updatedAt: new Date(),
-      },
     });
+
+    if (existingVideo && existingVideo.status !== VideoStatus.FAILED) {
+      return existingVideo;
+    }
+
+    const video = existingVideo
+      ? await this.prisma.client.video.update({
+          where: { id: existingVideo.id },
+          data: {
+            errorMessage: null,
+            updatedAt: new Date(),
+            status: VideoStatus.PENDING,
+          },
+        })
+      : await this.prisma.client.video.create({
+          data: {
+            organizationId,
+            channelId: dto.channelId,
+            youtubeUrl: dto.youtubeUrl,
+            youtubeVideoId: youtubeId,
+            title: meta.title,
+            durationSeconds: meta.durationSeconds,
+            thumbnailUrl: meta.thumbnailUrl,
+            status: VideoStatus.PENDING,
+          },
+        });
 
     // jobId makes re-adding the same import a no-op — BullMQ deduplicates for us.
     await this.downloadQueue.add(

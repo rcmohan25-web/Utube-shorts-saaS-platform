@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { VideoStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -26,7 +26,13 @@ export async function transitionVideo(
   if (!video) throw new NotFoundException('Video not found');
 
   if (!VALID_TRANSITIONS[video.status].includes(to)) {
-    throw new Error(`Invalid transition ${video.status} -> ${to} for video ${videoId}`);
+    const allowed = VALID_TRANSITIONS[video.status].length
+      ? VALID_TRANSITIONS[video.status].join(', ')
+      : 'none';
+    throw new BadRequestException({
+      code: 'INVALID_VIDEO_STATUS_TRANSITION',
+      message: `Cannot transition video ${videoId} from ${video.status} to ${to}. Allowed next statuses: ${allowed}.`,
+    });
   }
 
   return prisma.client.video.update({

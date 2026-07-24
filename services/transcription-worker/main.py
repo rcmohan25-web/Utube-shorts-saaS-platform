@@ -43,14 +43,18 @@ async def report_status(video_id: str, payload: dict):
     headers = {"x-internal-secret": API_INTERNAL_SECRET}
     async with httpx.AsyncClient() as client:
         try:
-            await client.patch(
+            res = await client.patch(
                 f"{API_BASE_URL}/videos/{video_id}/status",
                 json=payload,
                 headers=headers,
                 timeout=30,
             )
+            if res.status_code >= 400:
+                logger.error("status callback failed for %s: %s %s", video_id, res.status_code, res.text)
+                raise RuntimeError(f"status callback failed for {video_id}: {res.status_code} {res.text}")
         except httpx.HTTPError as exc:
             logger.error("status callback failed for %s: %s", video_id, exc)
+            raise
 
 
 def run_pipeline(job: TranscribeJob):
