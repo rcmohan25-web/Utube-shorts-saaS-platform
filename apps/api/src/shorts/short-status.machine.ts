@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const VALID_TRANSITIONS: Record<ShortStatus, ShortStatus[]> = {
   RENDERING: [ShortStatus.REVIEW, ShortStatus.FAILED],
   REVIEW: [ShortStatus.APPROVED, ShortStatus.REJECTED],
-  APPROVED: [ShortStatus.SCHEDULED], // wired up once the Scheduler PR lands
+  APPROVED: [ShortStatus.SCHEDULED, ShortStatus.REJECTED], // wired up once the Scheduler PR lands
   SCHEDULED: [ShortStatus.PUBLISHED, ShortStatus.FAILED],
   REJECTED: [ShortStatus.RENDERING], // rerender, via /shorts/:id/rerender (future)
   PUBLISHED: [],
