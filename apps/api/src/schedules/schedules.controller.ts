@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { IsString } from 'class-validator';
 import { UserRole } from '@shorts/db';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -25,16 +26,23 @@ import { CreateScheduleDto } from './dto/create-schedule.dto';
 
 // Internal-only DTOs — kept inline since they're only used here
 class CompleteCallbackDto {
+  @IsString()
   youtubeVideoId!: string;
+
+  @IsString()
   organizationId!: string;
 }
 
 class FailedCallbackDto {
+  @IsString()
   errorMessage!: string;
+
+  @IsString()
   organizationId!: string;
 }
 
 class QuotaExceededCallbackDto {
+  @IsString()
   organizationId!: string;
 }
 

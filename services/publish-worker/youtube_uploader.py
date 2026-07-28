@@ -70,7 +70,7 @@ def initiate_upload_session(
     }
 
     res = requests.post(
-        "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+        "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",

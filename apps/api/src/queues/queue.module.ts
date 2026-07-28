@@ -55,7 +55,12 @@ export const QUEUE_NAMES = {
         // Use CommonJS require here so the code compiles reliably.
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const BullMQ = require('bullmq');
-        return new BullMQ.QueueScheduler(QUEUE_NAMES.PUBLISH, {
+        const Scheduler = BullMQ.QueueScheduler ?? BullMQ.JobScheduler;
+        if (!Scheduler) {
+          throw new Error('BullMQ scheduler class not found: expected QueueScheduler or JobScheduler');
+        }
+
+        return new Scheduler(QUEUE_NAMES.PUBLISH, {
           connection: {
             host: process.env.REDIS_HOST ?? 'localhost',
             port: Number(process.env.REDIS_PORT ?? 6379),
