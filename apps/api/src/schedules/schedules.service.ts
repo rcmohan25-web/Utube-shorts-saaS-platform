@@ -35,6 +35,26 @@ export class SchedulesService {
     });
     if (!short) throw new NotFoundException('Short not found');
 
+    // ── 2. Guarantee G1: no duplicate active schedule ───────────────────────
+    const existingSchedule = await this.prisma.client.schedule.findFirst({
+      where: {
+        organizationId,
+        shortId: dto.shortId,
+        status: { in: ['PENDING', 'PUBLISHED'] },
+      },
+    });
+    if (existingSchedule) {
+      throw new ConflictException(
+        existingSchedule.status === 'PUBLISHED'
+          ? 'This Short has already been published to YouTube'
+          : 'This Short already has a pending schedule — cancel it first if you want to reschedule',
+      );
+    }
+
+    if (short.youtubeVideoId || short.status === ShortStatus.PUBLISHED) {
+      throw new ConflictException('This Short has already been published to YouTube');
+    }
+
     if (short.status !== ShortStatus.APPROVED) {
       throw new BadRequestException(
         `Short must be APPROVED before scheduling — current status: ${short.status}. ` +
@@ -45,7 +65,7 @@ export class SchedulesService {
       throw new BadRequestException('Short has no render file — cannot schedule');
     }
 
-    // ── 2. Validate the channel ─────────────────────────────────────────────
+    // ── 3. Validate the channel ─────────────────────────────────────────────
     const channel = await this.prisma.client.channel.findFirst({
       where: { id: dto.channelId, organizationId, isActive: true },
       include: { user: true },
@@ -59,22 +79,7 @@ export class SchedulesService {
       );
     }
 
-    // ── 3. Guarantee G1: no duplicate active schedule ───────────────────────
-    const existingSchedule = await this.prisma.client.schedule.findFirst({
-      where: {
-        shortId: dto.shortId,
-        status: { in: ['PENDING', 'PUBLISHED'] },
-      },
-    });
-    if (existingSchedule) {
-      throw new ConflictException(
-        existingSchedule.status === 'PUBLISHED'
-          ? 'This Short has already been published to YouTube'
-          : 'This Short already has a pending schedule — cancel it first if you want to reschedule',
-      );
-    }
-
-    // ── 4. §14.4: YouTube daily upload limit — 100 videos per channel per day
+    // ── 3. §14.4: YouTube daily upload limit — 100 videos per channel per day
     const scheduledDate = new Date(dto.scheduledAt);
     const dailyCount = await this.prisma.client.schedule.count({
       where: {
@@ -249,10 +254,14 @@ export class SchedulesService {
       });
       if (!schedule) throw new NotFoundException('Schedule not found');
 
-      // Idempotency: if already marked published (e.g. duplicate callback),
-      // return without error and without re-emitting the WS event.
-      if (schedule.status === 'PUBLISHED') {
-        return { schedule, shortId: schedule.shortId, alreadyPublished: true };
+      // Terminal states are immutable: a late callback must not flip a
+      // published or cancelled schedule back into a different state.
+      if (schedule.status === 'PUBLISHED' || schedule.status === 'FAILED' || schedule.status === 'CANCELLED') {
+        return {
+          schedule,
+          shortId: schedule.shortId,
+          alreadyPublished: schedule.status === 'PUBLISHED',
+        };
       }
 
       const updatedSchedule = await tx.schedule.update({
@@ -327,6 +336,16 @@ export class SchedulesService {
       where: { id: scheduleId, organizationId },
     });
     if (!schedule) throw new NotFoundException('Schedule not found');
+
+    if (schedule.status === 'PUBLISHED' || schedule.status === 'FAILED' || schedule.status === 'CANCELLED') {
+      this.logger.warn({
+        msg: 'schedule.markFailed.ignored_terminal_state',
+        scheduleId,
+        organizationId,
+        currentStatus: schedule.status,
+      });
+      return schedule;
+    }
 
     const updated = await this.prisma.client.schedule.update({
       where: { id: scheduleId },

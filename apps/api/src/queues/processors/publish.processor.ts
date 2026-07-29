@@ -55,19 +55,10 @@ export class PublishProcessor extends WorkerHost {
 
     // ── Guards ──────────────────────────────────────────────────────────────
 
-    // Guard 1: non-PENDING schedules (cancelled while in the delay queue)
-    if (schedule.status !== 'PENDING') {
-      this.logger.log({
-        msg: 'publish.skipped.non_pending',
-        scheduleId,
-        status: schedule.status,
-      });
-      return;
-    }
-
-    // Guard 2: Guarantee G2 — idempotency. If Short already has a YouTube id,
+    // Guard 1: Guarantee G2 — idempotency. If Short already has a YouTube id,
     // a previous attempt uploaded successfully but the callback to NestJS
-    // failed. Finalize without re-uploading.
+    // failed. Finalize without re-uploading, even if the job is being retried
+    // after the schedule has already moved to a terminal state.
     if (schedule.short.youtubeVideoId) {
       this.logger.log({
         msg: 'publish.idempotent.already_uploaded',
@@ -79,6 +70,16 @@ export class PublishProcessor extends WorkerHost {
         organizationId,
         schedule.short.youtubeVideoId,
       );
+      return;
+    }
+
+    // Guard 2: non-PENDING schedules (cancelled while in the delay queue)
+    if (schedule.status !== 'PENDING') {
+      this.logger.log({
+        msg: 'publish.skipped.non_pending',
+        scheduleId,
+        status: schedule.status,
+      });
       return;
     }
 

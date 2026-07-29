@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "nest build --webpack false --tsc -p tsconfig.build.json",
     "dev": "nest start --watch",
-    "start": "node dist/main.js",
+    "start": "pnpm run build && node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit"
   },
