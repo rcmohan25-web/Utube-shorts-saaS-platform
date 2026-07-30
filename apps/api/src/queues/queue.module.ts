@@ -25,12 +25,14 @@ const getRedisConnection = () => {
   const port = Number(process.env.REDIS_PORT ?? 6379);
 
   if (rawHost.startsWith('redis://') || rawHost.startsWith('rediss://')) {
-    return { url: rawHost, port };
+    return { url: rawHost, port, enableOfflineQueue: true, lazyConnect: true };
   }
 
   return {
     host: rawHost === 'localhost' ? '127.0.0.1' : rawHost,
     port,
+    enableOfflineQueue: true,
+    lazyConnect: true,
   };
 };
 
@@ -39,6 +41,10 @@ const getRedisConnection = () => {
   imports: [
     BullModule.forRoot({
       connection: getRedisConnection(),
+      defaultJobOptions: {
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
     }),
     BullModule.registerQueue(
       { name: QUEUE_NAMES.VIDEO_DOWNLOAD },
