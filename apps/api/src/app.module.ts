@@ -15,12 +15,14 @@ import { ChannelsModule } from './channels/channels.module';
 import { ClipsModule } from './clips/clips.module';
 import { ShortsModule } from './shorts/shorts.module';
 import { SchedulesModule } from './schedules/schedules.module';
+// PR 5 (§17 Analytics Engine): daily sync cron + /analytics endpoints.
+import { AnalyticsModule } from './analytics/analytics.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? 'info',
@@ -32,8 +34,9 @@ import { RolesGuard } from './common/guards/roles.guard';
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     // CRITICAL: ScheduleModule.forRoot() must be here for @Cron decorators
-    // to fire. Without this, YoutubeTokenService.refreshNearlyExpiredTokens()
-    // and SchedulesService.checkStuckSchedules() silently never run —
+    // to fire. Without this, YoutubeTokenService.refreshNearlyExpiredTokens(),
+    // SchedulesService.checkStuckSchedules(), and (as of PR 5)
+    // AnalyticsService.dailySyncAllPublished() silently never run —
     // no error, no warning, just nothing happening at the scheduled time.
     ScheduleModule.forRoot(),
     PrismaModule,
@@ -46,6 +49,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     ClipsModule,
     ShortsModule,
     SchedulesModule,
+    AnalyticsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

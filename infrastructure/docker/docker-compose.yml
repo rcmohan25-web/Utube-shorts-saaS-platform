@@ -18,6 +18,11 @@ services:
     image: redis:7-alpine
     command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
     ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   pgadmin:
     image: dpage/pgadmin4
@@ -32,6 +37,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
     ports: ["3030:3000"]
+    depends_on:
+      redis:
+        condition: service_healthy
 
   clip-worker:
     build: ../../services/clip-worker
@@ -41,7 +49,11 @@ services:
       API_BASE_URL: http://host.docker.internal:3001/api/v1
       REDIS_HOST: redis
     ports: ["8002:8002"]
-    depends_on: [redis]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   transcription-worker:
     build: ../../services/transcription-worker
@@ -50,6 +62,11 @@ services:
     environment:
       API_BASE_URL: http://host.docker.internal:3001/api/v1
     ports: ["8001:8001"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   render-worker:
     build: ../../services/render-worker
@@ -58,6 +75,11 @@ services:
     environment:
       API_BASE_URL: http://host.docker.internal:3001/api/v1
     ports: ["8003:8003"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   publish-worker:
     build: ../../services/publish-worker
@@ -66,6 +88,11 @@ services:
     environment:
       API_BASE_URL: http://host.docker.internal:3001/api/v1
     ports: ["8004:8004"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:

@@ -15,6 +15,10 @@ import { StorageService } from '../storage/storage.service';
 import { VideoGateway } from '../websockets/video.gateway';
 import { QUEUE_NAMES } from '../queues/queue.module';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
+// PR 5 (§17 Analytics Engine): schedule the first analytics-sync job the
+// moment a Short actually goes live, per §17.1 "24h after publish:
+// analytics-sync job queued for first day."
+import { AnalyticsService } from '../analytics/analytics.service';
 
 @Injectable()
 export class SchedulesService {
@@ -24,6 +28,7 @@ export class SchedulesService {
     private prisma: PrismaService,
     private storage: StorageService,
     private videoGateway: VideoGateway,
+    private analytics: AnalyticsService,
     @InjectQueue(QUEUE_NAMES.PUBLISH) private publishQueue: Queue,
   ) {}
 
@@ -317,6 +322,23 @@ export class SchedulesService {
         youtubeVideoId,
         publishedAt: new Date().toISOString(),
       });
+
+      // PR 5 (§17.1): kick off the first analytics sync 24h from now.
+      // Fire-and-forget is intentional here in the sense that a queue-add
+      // failure shouldn't fail the publish confirmation itself — but we do
+      // still want it logged loudly if it ever happens, since a missed
+      // scheduleFirstSync() means that Short never gets picked up until the
+      // next 3am daily cron (§17.1) finds it via the PUBLISHED-status scan.
+      try {
+        await this.analytics.scheduleFirstSync(result.shortId, organizationId);
+      } catch (err) {
+        this.logger.error({
+          msg: 'schedule.markPublished.analytics_schedule_failed',
+          shortId: result.shortId,
+          organizationId,
+          reason: (err as Error).message,
+        });
+      }
     }
 
     this.logger.log({
