@@ -6,6 +6,10 @@ import { PublishProcessor } from '../queues/processors/publish.processor';
 import { WebsocketsModule } from '../websockets/websockets.module';
 import { YoutubeModule } from '../youtube/youtube.module';
 import { QUEUE_NAMES } from '../queues/queue.module';
+// PR 5 (§17 Analytics Engine): SchedulesService calls
+// AnalyticsService.scheduleFirstSync() from markPublished(). AnalyticsModule
+// does not import SchedulesModule, so this stays a one-way import — no cycle.
+import { AnalyticsModule } from '../analytics/analytics.module';
 
 // PublishProcessor is registered here (not in QueueModule) because it
 // depends on SchedulesService and YoutubeTokenService — both scheduling
@@ -20,6 +24,7 @@ import { QUEUE_NAMES } from '../queues/queue.module';
     BullModule.registerQueue({ name: QUEUE_NAMES.PUBLISH }),
     WebsocketsModule,
     YoutubeModule,
+    AnalyticsModule,
   ],
   providers: [SchedulesService, PublishProcessor],
   controllers: [SchedulesController],

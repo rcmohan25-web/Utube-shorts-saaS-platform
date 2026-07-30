@@ -20,14 +20,25 @@ export const QUEUE_NAMES = {
   NOTIFICATION: 'notification',
 } as const;
 
+const getRedisConnection = () => {
+  const rawHost = (process.env.REDIS_HOST ?? '127.0.0.1').trim();
+  const port = Number(process.env.REDIS_PORT ?? 6379);
+
+  if (rawHost.startsWith('redis://') || rawHost.startsWith('rediss://')) {
+    return { url: rawHost, port };
+  }
+
+  return {
+    host: rawHost === 'localhost' ? '127.0.0.1' : rawHost,
+    port,
+  };
+};
+
 @Global()
 @Module({
   imports: [
     BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST ?? 'localhost',
-        port: Number(process.env.REDIS_PORT ?? 6379),
-      },
+      connection: getRedisConnection(),
     }),
     BullModule.registerQueue(
       { name: QUEUE_NAMES.VIDEO_DOWNLOAD },
@@ -61,10 +72,7 @@ export const QUEUE_NAMES = {
         }
 
         return new Scheduler(QUEUE_NAMES.PUBLISH, {
-          connection: {
-            host: process.env.REDIS_HOST ?? 'localhost',
-            port: Number(process.env.REDIS_PORT ?? 6379),
-          },
+          connection: getRedisConnection(),
         });
       },
     },
