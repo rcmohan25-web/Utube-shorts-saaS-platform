@@ -8,7 +8,11 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody: true exposes req.rawBody on every request (Nest buffers it
+  // alongside the parsed body) — required by POST /billing/webhook so
+  // Stripe's signature check runs against the exact bytes Stripe signed.
+  // See billing.controller.ts / billing.service.ts for where it's consumed.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
 
   app.useLogger(app.get(Logger));
   app.use(helmet());
