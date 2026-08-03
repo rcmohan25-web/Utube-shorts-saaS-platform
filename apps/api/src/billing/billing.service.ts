@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import Stripe from 'stripe';
 import { Plan, SubStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
+// PR 7 (§15 Notifications): payment-failed alerts.
+import { NotificationsService } from '../notifications/notifications.service';
 
 // §13.1 plan -> quota mapping. AGENCY/ENTERPRISE quotas here are nominal —
 // QuotaService treats those two plans as unconditionally unlimited, so the
@@ -44,7 +46,10 @@ export class BillingService {
   private readonly logger = new Logger(BillingService.name);
   private client: Stripe | null = null;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {}
 
   private getClient(): Stripe {
     if (this.client) return this.client;
@@ -222,12 +227,12 @@ export class BillingService {
 
     const status = mapStripeStatus(subscription.status);
     const firstItem = subscription.items.data[0];
-    const currentPeriodStart = firstItem?.current_period_start
+    const currentPeriodStart = firstItem
       ? new Date(firstItem.current_period_start * 1000)
-      : new Date(subscription.created * 1000);
-    const currentPeriodEnd = firstItem?.current_period_end
+      : new Date(subscription.start_date * 1000);
+    const currentPeriodEnd = firstItem
       ? new Date(firstItem.current_period_end * 1000)
-      : new Date(subscription.created * 1000);
+      : new Date(subscription.start_date * 1000);
 
     await this.prisma.client.$transaction(async (tx) => {
       await tx.subscription.upsert({
@@ -237,15 +242,15 @@ export class BillingService {
           stripeSubscriptionId: subscription.id,
           plan: plan ?? Plan.STARTER,
           status,
-          currentPeriodStart: currentPeriodStart ?? new Date(subscription.created * 1000),
-          currentPeriodEnd: currentPeriodEnd ?? new Date(subscription.created * 1000),
+          currentPeriodStart,
+          currentPeriodEnd,
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
         },
         update: {
           plan: plan ?? undefined,
           status,
-          currentPeriodStart: currentPeriodStart ?? new Date(subscription.created * 1000),
-          currentPeriodEnd: currentPeriodEnd ?? new Date(subscription.created * 1000),
+          currentPeriodStart,
+          currentPeriodEnd,
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
         },
       });
@@ -286,10 +291,9 @@ export class BillingService {
   }
 
   private async onPaymentFailed(invoice: Stripe.Invoice): Promise<void> {
-    const subscriptionValue = (invoice as Stripe.Invoice & { subscription?: string | { id?: string } }).subscription;
-    if (!subscriptionValue) return;
-    const subscriptionId = typeof subscriptionValue === 'string' ? subscriptionValue : subscriptionValue.id;
-    if (!subscriptionId) return;
+    const subscription = invoice.parent?.subscription_details?.subscription;
+    if (!subscription) return;
+    const subscriptionId = typeof subscription === 'string' ? subscription : subscription.id;
 
     const existing = await this.prisma.client.subscription.findUnique({ where: { stripeSubscriptionId: subscriptionId } });
     if (!existing) return;
@@ -299,9 +303,13 @@ export class BillingService {
       data: { status: SubStatus.PAST_DUE },
     });
 
-    // §15.1 "Payment failed" notification is Week 6 scope, not yet built —
-    // log loudly for now so it's grep-able in Grafana Loki (§20.3) until
-    // the notification pipeline exists to pick this up.
+    // §15.1 "Payment failed: Email + In-app — Stripe payment_intent.payment_failed
+    // webhook." Fire the actual notification now that the pipeline exists —
+    // this used to be log-only.
+    await this.notifications.notify('PAYMENT_FAILED', existing.organizationId, {
+      invoiceId: invoice.id,
+    });
+
     this.logger.error({
       msg: 'billing.payment_failed',
       organizationId: existing.organizationId,
