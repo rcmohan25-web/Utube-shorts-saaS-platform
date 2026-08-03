@@ -19,6 +19,10 @@ import { CreateScheduleDto } from './dto/create-schedule.dto';
 // moment a Short actually goes live, per §17.1 "24h after publish:
 // analytics-sync job queued for first day."
 import { AnalyticsService } from '../analytics/analytics.service';
+// PR 6 (§13 Billing): quota gate, checked here — before a schedule (and
+// therefore an eventual publish) is committed to. See QuotaService's
+// comment for why consumption itself is NOT done here.
+import { QuotaService } from '../billing/quota.service';
 
 @Injectable()
 export class SchedulesService {
@@ -29,6 +33,7 @@ export class SchedulesService {
     private storage: StorageService,
     private videoGateway: VideoGateway,
     private analytics: AnalyticsService,
+    private quota: QuotaService,
     @InjectQueue(QUEUE_NAMES.PUBLISH) private publishQueue: Queue,
   ) {}
 
@@ -70,7 +75,15 @@ export class SchedulesService {
       throw new BadRequestException('Short has no render file — cannot schedule');
     }
 
-    // ── 3. Validate the channel ─────────────────────────────────────────────
+    // ── 3. §13.2 quota gate ──────────────────────────────────────────────────
+    // Must run BEFORE the Schedule row is created: §18.2's critical test
+    // case is "51st Short on Starter plan -> 402 QUOTA_EXCEEDED; Short stays
+    // APPROVED not PUBLISHED." Gating here (rather than later, at actual
+    // publish time) means the user gets the 402 immediately in the
+    // scheduling UI instead of a schedule that silently never fires.
+    await this.quota.assertQuotaAvailable(organizationId);
+
+    // ── 4. Validate the channel ─────────────────────────────────────────────
     const channel = await this.prisma.client.channel.findFirst({
       where: { id: dto.channelId, organizationId, isActive: true },
       include: { user: true },
@@ -84,7 +97,7 @@ export class SchedulesService {
       );
     }
 
-    // ── 3. §14.4: YouTube daily upload limit — 100 videos per channel per day
+    // ── 5. §14.4: YouTube daily upload limit — 100 videos per channel per day
     const scheduledDate = new Date(dto.scheduledAt);
     const dailyCount = await this.prisma.client.schedule.count({
       where: {
@@ -101,7 +114,7 @@ export class SchedulesService {
       );
     }
 
-    // ── 5. Time window validation ───────────────────────────────────────────
+    // ── 6. Time window validation ───────────────────────────────────────────
     const minScheduledAt = addMinutes(new Date(), 5);
     if (scheduledDate < minScheduledAt) {
       throw new BadRequestException(
@@ -117,7 +130,7 @@ export class SchedulesService {
       );
     }
 
-    // ── 6. Create the Schedule row, then dispatch BullMQ ───────────────────
+    // ── 7. Create the Schedule row, then dispatch BullMQ ───────────────────
     // Intentionally NOT in a $transaction: we want the Schedule row committed
     // before we dispatch to BullMQ, so if BullMQ dispatch fails we can
     // compensate cleanly (delete the orphaned row and let the error surface
@@ -304,6 +317,8 @@ export class SchedulesService {
         },
       });
 
+      // §13.2: this UsageEvent write is the actual quota-consumption point
+      // — QuotaService.assertQuotaAvailable() reads exactly this table.
       await tx.usageEvent.create({
         data: {
           organizationId,

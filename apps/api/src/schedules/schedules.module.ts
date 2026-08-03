@@ -10,6 +10,11 @@ import { QUEUE_NAMES } from '../queues/queue.module';
 // AnalyticsService.scheduleFirstSync() from markPublished(). AnalyticsModule
 // does not import SchedulesModule, so this stays a one-way import — no cycle.
 import { AnalyticsModule } from '../analytics/analytics.module';
+// PR 6 (§13 Billing): SchedulesService.create() calls
+// QuotaService.assertQuotaAvailable(). BillingModule does not import
+// SchedulesModule, so this is also a one-way import — same shape as
+// AnalyticsModule above, no circular-import risk.
+import { BillingModule } from '../billing/billing.module';
 
 // PublishProcessor is registered here (not in QueueModule) because it
 // depends on SchedulesService and YoutubeTokenService — both scheduling
@@ -25,6 +30,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
     WebsocketsModule,
     YoutubeModule,
     AnalyticsModule,
+    BillingModule,
   ],
   providers: [SchedulesService, PublishProcessor],
   controllers: [SchedulesController],

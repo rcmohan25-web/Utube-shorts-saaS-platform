@@ -17,6 +17,8 @@ import { ShortsModule } from './shorts/shorts.module';
 import { SchedulesModule } from './schedules/schedules.module';
 // PR 5 (§17 Analytics Engine): daily sync cron + /analytics endpoints.
 import { AnalyticsModule } from './analytics/analytics.module';
+// PR 6 (§13 SaaS Billing): Stripe checkout/portal/webhook + quota gate.
+import { BillingModule } from './billing/billing.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -50,6 +52,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     ShortsModule,
     SchedulesModule,
     AnalyticsModule,
+    BillingModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

@@ -328,3 +328,10 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
 }
+
+model StripeWebhookEvent {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique
+  type          String
+  processedAt   DateTime @default(now())
+}
