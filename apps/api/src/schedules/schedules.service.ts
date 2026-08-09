@@ -15,14 +15,12 @@ import { StorageService } from '../storage/storage.service';
 import { VideoGateway } from '../websockets/video.gateway';
 import { QUEUE_NAMES } from '../queues/queue.module';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
-// PR 5 (§17 Analytics Engine): schedule the first analytics-sync job the
-// moment a Short actually goes live, per §17.1 "24h after publish:
-// analytics-sync job queued for first day."
 import { AnalyticsService } from '../analytics/analytics.service';
-// PR 6 (§13 Billing): quota gate, checked here — before a schedule (and
-// therefore an eventual publish) is committed to. See QuotaService's
-// comment for why consumption itself is NOT done here.
 import { QuotaService } from '../billing/quota.service';
+// PR 7 (§15 Notifications): SHORT_PUBLISHED on success, PIPELINE_FAILURE
+// on markFailed(). Also drives QuotaService.checkAndNotifyThreshold()'s
+// QUOTA_WARNING at 80%/95%, which reads the same UsageEvent write below.
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SchedulesService {
@@ -34,6 +32,7 @@ export class SchedulesService {
     private videoGateway: VideoGateway,
     private analytics: AnalyticsService,
     private quota: QuotaService,
+    private notifications: NotificationsService,
     @InjectQueue(QUEUE_NAMES.PUBLISH) private publishQueue: Queue,
   ) {}
 
@@ -278,6 +277,7 @@ export class SchedulesService {
         return {
           schedule,
           shortId: schedule.shortId,
+          shortTitle: schedule.short.title,
           alreadyPublished: schedule.status === 'PUBLISHED',
         };
       }
@@ -328,7 +328,12 @@ export class SchedulesService {
         },
       });
 
-      return { schedule: updatedSchedule, shortId: schedule.shortId, alreadyPublished: false };
+      return {
+        schedule: updatedSchedule,
+        shortId: schedule.shortId,
+        shortTitle: currentShort.title,
+        alreadyPublished: false,
+      };
     });
 
     if (!result.alreadyPublished) {
@@ -338,7 +343,22 @@ export class SchedulesService {
         publishedAt: new Date().toISOString(),
       });
 
-      // PR 5 (§17.1): kick off the first analytics sync 24h from now.
+      // §15.1 "Short published" — In-app + Slack, every successful upload.
+      try {
+        await this.notifications.notify('SHORT_PUBLISHED', organizationId, {
+          title: result.shortTitle,
+          youtubeVideoId,
+        });
+      } catch (err) {
+        this.logger.error({
+          msg: 'schedule.markPublished.notification_failed',
+          shortId: result.shortId,
+          organizationId,
+          reason: (err as Error).message,
+        });
+      }
+
+      // §17.1: kick off the first analytics sync 24h from now.
       // Fire-and-forget is intentional here in the sense that a queue-add
       // failure shouldn't fail the publish confirmation itself — but we do
       // still want it logged loudly if it ever happens, since a missed
@@ -350,6 +370,19 @@ export class SchedulesService {
         this.logger.error({
           msg: 'schedule.markPublished.analytics_schedule_failed',
           shortId: result.shortId,
+          organizationId,
+          reason: (err as Error).message,
+        });
+      }
+
+      // §15.1 "Quota warning 80%/95%" — checked against the UsageEvent row
+      // just written above. See QuotaService.checkAndNotifyThreshold()'s
+      // comment for why this fires at most once per crossed threshold.
+      try {
+        await this.quota.checkAndNotifyThreshold(organizationId);
+      } catch (err) {
+        this.logger.error({
+          msg: 'schedule.markPublished.quota_check_failed',
           organizationId,
           reason: (err as Error).message,
         });
@@ -401,6 +434,23 @@ export class SchedulesService {
       errorMessage,
       retryCount: updated.retryCount,
     });
+
+    // §15.1 "Pipeline failure" — Email + Slack, video/publish stuck or
+    // failed after all retries exhausted.
+    try {
+      await this.notifications.notify('PIPELINE_FAILURE', organizationId, {
+        resourceType: 'schedule',
+        resourceId: scheduleId,
+        reason: errorMessage,
+      });
+    } catch (err) {
+      this.logger.error({
+        msg: 'schedule.markFailed.notification_failed',
+        scheduleId,
+        organizationId,
+        reason: (err as Error).message,
+      });
+    }
 
     return updated;
   }

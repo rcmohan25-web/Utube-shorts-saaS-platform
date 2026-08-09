@@ -3,6 +3,7 @@ import { ShortStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { VideoGateway } from '../websockets/video.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateShortDto } from './dto/create-short.dto';
 import { RejectShortDto } from './dto/reject-short.dto';
 import { transitionShort } from './short-status.machine';
@@ -13,6 +14,7 @@ export class ShortsService {
     private prisma: PrismaService,
     private storage: StorageService,
     private videoGateway: VideoGateway,
+    private notifications: NotificationsService,
   ) {}
 
   // Worker -> API callback (render-worker). Always a create — see
@@ -45,6 +47,16 @@ export class ShortsService {
       this.videoGateway.emitShortReady(dto.organizationId, {
         shortId: short.id,
         thumbnailUrl: thumbnailUrl ?? '',
+      });
+      // §15.1 "Shorts ready for review" — batched (max 1 email/hour) inside
+      // NotificationsService.notify(); safe to call once per render here.
+      await this.notifications.notify('SHORTS_READY', dto.organizationId, {});
+    } else {
+      // §15.1 "Pipeline failure" — render-worker reported FAILED.
+      await this.notifications.notify('PIPELINE_FAILURE', dto.organizationId, {
+        resourceType: 'short',
+        resourceId: short.id,
+        reason: dto.errorMessage ?? 'Render pipeline failed — check render-worker logs.',
       });
     }
 

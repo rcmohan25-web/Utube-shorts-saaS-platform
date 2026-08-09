@@ -10,6 +10,7 @@ import type { Server, Socket } from 'socket.io';
 import type {
   AuthenticatedUserClaims,
   ClipCreatedEvent,
+  NotificationEvent,
   ShortPublishedEvent,
   ShortReadyEvent,
   VideoStatusEvent,
@@ -85,5 +86,11 @@ export class VideoGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // their pending schedules have been moved by 24h.
   emitQuotaWarning(orgId: string, payload: QuotaWarningPayload) {
     this.server.to(`org:${orgId}`).emit('quota:warning', payload);
+  }
+
+  // PR 7 (§15): pushes any new Notification row live. Frontend bell
+  // subscribes to this to update its badge without polling.
+  emitNotification(orgId: string, payload: NotificationEvent) {
+    this.server.to(`org:${orgId}`).emit('notification:new', payload);
   }
 }

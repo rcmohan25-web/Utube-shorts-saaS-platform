@@ -6,10 +6,13 @@ const { SchedulesService } = require('../dist/schedules/schedules.service.js');
 
 // PR 5 (§17 Analytics Engine): SchedulesService gained an `analytics`
 // constructor dependency (AnalyticsService), injected before the BullMQ
-// queue argument. This stub matches AnalyticsService's public surface used
-// by SchedulesService.markPublished() — scheduleFirstSync(). Individual
-// tests below override it further where the analytics call itself matters.
+// queue argument. PR 6 (§13 Billing) added `quota` (QuotaService) after
+// that. PR 7 (§15 Notifications) added `notifications` (NotificationsService)
+// after quota. Current order:
+//   (prisma, storage, videoGateway, analytics, quota, notifications, publishQueue)
 const noopAnalytics = { scheduleFirstSync: async () => {} };
+const noopQuota = { assertQuotaAvailable: async () => {} };
+const noopNotifications = { notify: async () => {} };
 
 test('retrying a published schedule with a YouTube video id does not dispatch a new upload', async () => {
   let markPublishedCalls = 0;
@@ -76,6 +79,8 @@ test('create rejects a short that is already published even without a schedule r
     {},
     {},
     noopAnalytics,
+    noopQuota,
+    noopNotifications,
     { add: async () => ({ id: 'job-1' }) },
   );
 
@@ -118,6 +123,8 @@ test('checkStuckSchedules marks stale pending schedules as failed', async () => 
     {},
     {},
     noopAnalytics,
+    noopQuota,
+    noopNotifications,
     { add: async () => ({ id: 'job-1' }) },
   );
 
@@ -156,6 +163,8 @@ test('markFailed leaves a published schedule unchanged when a stale failure call
     {},
     {},
     noopAnalytics,
+    noopQuota,
+    noopNotifications,
     { add: async () => ({ id: 'job-1' }) },
   );
 
@@ -166,13 +175,15 @@ test('markFailed leaves a published schedule unchanged when a stale failure call
 });
 
 // PR 5: markPublished() now also schedules the first analytics sync (§17.1).
-// This test asserts that call happens exactly once, with the right args,
-// on a genuinely-new publish — and is skipped on the already-published
-// idempotent replay path (covered implicitly by the mock never receiving
+// PR 7: markPublished() now also fires a SHORT_PUBLISHED notification.
+// This test asserts both happen exactly once, with the right args, on a
+// genuinely-new publish — and are skipped on the already-published
+// idempotent replay path (covered implicitly by the mocks never receiving
 // a call in the "retrying" test above, since PublishProcessor short-circuits
 // before ever calling markPublished's real implementation there).
-test('markPublished schedules the first analytics sync exactly once for a new publish', async () => {
+test('markPublished schedules the first analytics sync and fires SHORT_PUBLISHED exactly once for a new publish', async () => {
   let scheduleFirstSyncCalls = 0;
+  let notifyCalls = 0;
   let emittedEvent = null;
 
   const service = new SchedulesService(
@@ -186,7 +197,7 @@ test('markPublished schedules the first analytics sync exactly once for a new pu
                 organizationId: 'org-4',
                 status: 'PENDING',
                 shortId: 'short-4',
-                short: { id: 'short-4', status: 'APPROVED' },
+                short: { id: 'short-4', status: 'APPROVED', title: 'My Short' },
               }),
               update: async () => ({ id: 'schedule-4', status: 'PUBLISHED' }),
             },
@@ -211,11 +222,21 @@ test('markPublished schedules the first analytics sync exactly once for a new pu
         assert.equal(organizationId, 'org-4');
       },
     },
+    noopQuota,
+    {
+      notify: async (type, organizationId, payload) => {
+        notifyCalls += 1;
+        assert.equal(type, 'SHORT_PUBLISHED');
+        assert.equal(organizationId, 'org-4');
+        assert.equal(payload.shortId, 'short-4');
+      },
+    },
     { add: async () => ({ id: 'job-1' }) },
   );
 
   await service.markPublished('schedule-4', 'org-4', 'yt-video-999');
 
   assert.equal(scheduleFirstSyncCalls, 1);
+  assert.equal(notifyCalls, 1);
   assert.equal(emittedEvent.payload.youtubeVideoId, 'yt-video-999');
 });
