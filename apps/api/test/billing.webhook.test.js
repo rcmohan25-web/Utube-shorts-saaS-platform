@@ -17,6 +17,9 @@ function stubStripeClient(service, { constructEventResult, subscriptionsRetrieve
   });
 }
 
+const noopNotifications = { notify: async () => {} };
+process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+
 test('handleWebhook ignores a duplicate event.id (§20.6 idempotency)', async () => {
   let createCalls = 0;
   let upsertCalls = 0;
@@ -37,7 +40,7 @@ test('handleWebhook ignores a duplicate event.id (§20.6 idempotency)', async ()
     },
   };
 
-  const service = new BillingService(prisma);
+  const service = new BillingService(prisma, noopNotifications);
   stubStripeClient(service, {
     constructEventResult: { id: 'evt_dup', type: 'checkout.session.completed', data: { object: {} } },
   });
@@ -72,7 +75,7 @@ test('handleWebhook upserts a Subscription and bumps org plan on checkout.sessio
   };
 
   process.env.STRIPE_PRICE_CREATOR = 'price_creator_123';
-  const service = new BillingService(prisma);
+  const service = new BillingService(prisma, noopNotifications);
   stubStripeClient(service, {
     constructEventResult: {
       id: 'evt_1',
@@ -103,4 +106,40 @@ test('handleWebhook upserts a Subscription and bumps org plan on checkout.sessio
   assert.equal(orgUpdates.length, 1);
   assert.equal(orgUpdates[0].data.plan, 'CREATOR');
   assert.equal(orgUpdates[0].data.quotaShortsPerMonth, 500);
+});
+
+test('handleWebhook fires a PAYMENT_FAILED notification on invoice.payment_failed', async () => {
+  const notifyCalls = [];
+  const prisma = {
+    client: {
+      stripeWebhookEvent: { create: async () => ({}) },
+      subscription: {
+        findUnique: async () => ({ organizationId: 'org-7', stripeSubscriptionId: 'sub_7' }),
+        update: async () => ({}),
+      },
+    },
+  };
+  const notifications = { notify: async (...args) => notifyCalls.push(args) };
+
+  const service = new BillingService(prisma, notifications);
+  stubStripeClient(service, {
+    constructEventResult: {
+      id: 'evt_pf_1',
+      type: 'invoice.payment_failed',
+      data: {
+        object: {
+          id: 'in_1',
+          parent: {
+            subscription_details: { subscription: 'sub_7' },
+          },
+        },
+      },
+    },
+  });
+
+  await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+  assert.equal(notifyCalls.length, 1);
+  assert.equal(notifyCalls[0][0], 'PAYMENT_FAILED');
+  assert.equal(notifyCalls[0][1], 'org-7');
 });

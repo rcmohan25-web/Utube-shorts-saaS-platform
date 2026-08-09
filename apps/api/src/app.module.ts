@@ -19,6 +19,12 @@ import { SchedulesModule } from './schedules/schedules.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 // PR 6 (§13 SaaS Billing): Stripe checkout/portal/webhook + quota gate.
 import { BillingModule } from './billing/billing.module';
+// PR 7 (§15 Notifications): email/in-app/Slack notifications, weekly
+// digest cron. Registered here (not just imported transitively by
+// BillingModule/SchedulesModule/etc) so its own @Cron(weeklyDigest) and
+// the notifications.controller.ts REST routes are always wired, even if
+// every other module that references it were ever removed.
+import { NotificationsModule } from './notifications/notifications.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -37,9 +43,9 @@ import { RolesGuard } from './common/guards/roles.guard';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     // CRITICAL: ScheduleModule.forRoot() must be here for @Cron decorators
     // to fire. Without this, YoutubeTokenService.refreshNearlyExpiredTokens(),
-    // SchedulesService.checkStuckSchedules(), and (as of PR 5)
-    // AnalyticsService.dailySyncAllPublished() silently never run —
-    // no error, no warning, just nothing happening at the scheduled time.
+    // SchedulesService.checkStuckSchedules(), AnalyticsService.dailySyncAllPublished(),
+    // and (as of PR 7) NotificationsService.weeklyDigest() silently never
+    // run — no error, no warning, just nothing happening at the scheduled time.
     ScheduleModule.forRoot(),
     PrismaModule,
     CryptoModule,
@@ -53,6 +59,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     SchedulesModule,
     AnalyticsModule,
     BillingModule,
+    NotificationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

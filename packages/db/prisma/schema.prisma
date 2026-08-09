@@ -71,6 +71,21 @@ enum EventType {
   VIDEO_IMPORTED
 }
 
+// PR 7 (§15 Notifications) — one row per delivered/queued notification,
+// backs the in-app bell + read/unread state. Email/Slack delivery itself
+// is NOT persisted here (no delivery log table yet) — this table is the
+// in-app channel's source of truth only, per §15.1's channel matrix.
+enum NotificationType {
+  SHORTS_READY
+  SHORT_PUBLISHED
+  PIPELINE_FAILURE
+  QUOTA_WARNING
+  QUOTA_EXCEEDED
+  TEAM_INVITE
+  PAYMENT_FAILED
+  WEEKLY_DIGEST
+}
+
 model Organization {
   id                  String   @id @default(cuid())
   name                String
@@ -95,6 +110,7 @@ model Organization {
   usageEvents   UsageEvent[]
   analytics     AnalyticsDaily[]
   auditLogs     AuditLog[]
+  notifications Notification[]
 }
 
 model User {
@@ -119,8 +135,6 @@ model User {
   @@index([organizationId, role])
 }
 
-// Required by the auth spec ("bcrypt-hashed in refresh_tokens table") but not
-// in the original combined schema doc — added here so token rotation is real.
 model RefreshToken {
   id        String    @id @default(cuid())
   userId    String
@@ -196,7 +210,7 @@ model Clip {
   suggestedTitle    String?
   suggestedHashtags String[]
   status            ClipStatus @default(PENDING)
-  rejectionReason   String? // added in PR 3 — why a human rejected this clip
+  rejectionReason   String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -224,7 +238,7 @@ model Short {
   reviewedBy      String?
   reviewedAt      DateTime?
   rejectionReason String?
-  errorMessage    String? // added in PR 3 — why render-worker reported FAILED
+  errorMessage    String?
   renderStarted   DateTime?
   renderEnded     DateTime?
   createdAt       DateTime    @default(now())
@@ -334,4 +348,23 @@ model StripeWebhookEvent {
   stripeEventId String   @unique
   type          String
   processedAt   DateTime @default(now())
+}
+
+// PR 7 — see NotificationType enum above for the delivered types.
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String? // null = org-wide (quota, digest); set = targeted (future: per-user prefs)
+  type           NotificationType
+  title          String
+  body           String
+  actionUrl      String?
+  metadata       Json?
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, readAt])
+  @@index([organizationId, createdAt])
 }

@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QUEUE_NAMES } from '../queues/queue.module';
 import { YoutubeService, extractYoutubeId } from '../youtube/youtube.service';
 import { VideoGateway } from '../websockets/video.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ImportVideoDto } from './dto/import-video.dto';
 import { VideoStatusCallbackDto } from './dto/video-status-callback.dto';
 import { transitionVideo } from './video-status.machine';
@@ -28,6 +29,7 @@ export class VideosService {
     private prisma: PrismaService,
     private youtube: YoutubeService,
     private videoGateway: VideoGateway,
+    private notifications: NotificationsService,
     @InjectQueue(QUEUE_NAMES.VIDEO_DOWNLOAD) private downloadQueue: Queue,
     @InjectQueue(QUEUE_NAMES.TRANSCRIPTION) private transcriptionQueue: Queue,
     @InjectQueue(QUEUE_NAMES.CLIP_DETECTION) private clipDetectionQueue: Queue,
@@ -136,6 +138,17 @@ export class VideosService {
       status: video.status,
       progress: STAGE_PROGRESS[video.status],
     });
+
+    // §15.1 "Pipeline failure" — video stuck/failed after all retries
+    // exhausted (also caught independently by the §7.3 stuck-schedule cron
+    // pattern for the publish side; this covers the import/transcode side).
+    if (dto.status === 'FAILED') {
+      await this.notifications.notify('PIPELINE_FAILURE', dto.organizationId, {
+        resourceType: 'video',
+        resourceId: id,
+        reason: dto.errorMessage ?? 'Video pipeline failed — check worker logs.',
+      });
+    }
 
     // Chain the pipeline: DOWNLOADED -> kick off transcription.
     if (dto.status === 'DOWNLOADED') {

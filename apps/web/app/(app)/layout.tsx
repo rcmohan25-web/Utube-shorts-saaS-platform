@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { NotificationBell } from '@/components/notification-bell';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -19,7 +20,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen">
       <aside className="w-56 border-r border-white/10 p-4">
-        <div className="mb-6 px-2 text-lg font-semibold">Shorts Pilot</div>
+        <div className="mb-6 flex items-center justify-between px-2">
+          <span className="text-lg font-semibold">Shorts Pilot</span>
+          <NotificationBell />
+        </div>
         <nav className="space-y-1">
           {NAV.map((item) => {
             const active = pathname?.startsWith(item.href);
