@@ -15,16 +15,16 @@ import { ChannelsModule } from './channels/channels.module';
 import { ClipsModule } from './clips/clips.module';
 import { ShortsModule } from './shorts/shorts.module';
 import { SchedulesModule } from './schedules/schedules.module';
-// PR 5 (§17 Analytics Engine): daily sync cron + /analytics endpoints.
 import { AnalyticsModule } from './analytics/analytics.module';
-// PR 6 (§13 SaaS Billing): Stripe checkout/portal/webhook + quota gate.
 import { BillingModule } from './billing/billing.module';
-// PR 7 (§15 Notifications): email/in-app/Slack notifications, weekly
-// digest cron. Registered here (not just imported transitively by
-// BillingModule/SchedulesModule/etc) so its own @Cron(weeklyDigest) and
-// the notifications.controller.ts REST routes are always wired, even if
-// every other module that references it were ever removed.
 import { NotificationsModule } from './notifications/notifications.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+// PR 8 (§9.2/§11.6 Team Management): invite flow + public accept routes.
+// Registered directly here (not just pulled in transitively via
+// OrganizationsModule) so InvitationsController's public /invitations/:token/*
+// routes are always mounted, matching the pattern NotificationsModule
+// already uses for the same reason.
+import { InvitationsModule } from './invitations/invitations.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -44,8 +44,8 @@ import { RolesGuard } from './common/guards/roles.guard';
     // CRITICAL: ScheduleModule.forRoot() must be here for @Cron decorators
     // to fire. Without this, YoutubeTokenService.refreshNearlyExpiredTokens(),
     // SchedulesService.checkStuckSchedules(), AnalyticsService.dailySyncAllPublished(),
-    // and (as of PR 7) NotificationsService.weeklyDigest() silently never
-    // run — no error, no warning, just nothing happening at the scheduled time.
+    // and NotificationsService.weeklyDigest() silently never run — no
+    // error, no warning, just nothing happening at the scheduled time.
     ScheduleModule.forRoot(),
     PrismaModule,
     CryptoModule,
@@ -60,6 +60,8 @@ import { RolesGuard } from './common/guards/roles.guard';
     AnalyticsModule,
     BillingModule,
     NotificationsModule,
+    OrganizationsModule,
+    InvitationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

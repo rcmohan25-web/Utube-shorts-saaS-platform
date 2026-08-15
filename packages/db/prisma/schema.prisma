@@ -71,6 +71,18 @@ enum EventType {
   VIDEO_IMPORTED
 }
 
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
 // PR 7 (§15 Notifications) — one row per delivered/queued notification,
 // backs the in-app bell + read/unread state. Email/Slack delivery itself
 // is NOT persisted here (no delivery log table yet) — this table is the
@@ -121,6 +133,7 @@ model User {
   name           String
   role           UserRole  @default(VIEWER)
   emailVerified  Boolean   @default(false)
+  status         UserStatus @default(ACTIVE)
   ytAccessToken  String? // AES-256-GCM encrypted
   ytRefreshToken String? // AES-256-GCM encrypted
   ytTokenExpiry  DateTime?

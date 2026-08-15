@@ -11,6 +11,7 @@ const NAV = [
   { href: '/scheduler', label: 'Scheduler' },
   { href: '/analytics', label: 'Analytics' },
   { href: '/settings', label: 'Settings' },
+  { href: '/settings/users', label: 'Team' },
   { href: '/billing', label: 'Billing' },
 ];
 
@@ -26,7 +27,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="space-y-1">
           {NAV.map((item) => {
-            const active = pathname?.startsWith(item.href);
+            // Exact match for /settings so it doesn't also light up for
+            // /settings/users — both routes now live under the same prefix.
+            const active =
+              item.href === '/settings' ? pathname === '/settings' : pathname?.startsWith(item.href);
             return (
               <Link
                 key={item.href}

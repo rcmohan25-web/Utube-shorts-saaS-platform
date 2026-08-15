@@ -8,7 +8,7 @@ import { compare, hash } from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
 import { addDays } from 'date-fns';
-import { UserRole } from '@shorts/db';
+import { UserRole, UserStatus } from '@shorts/db';
 import type { AuthTokens, AuthenticatedUserClaims } from '@shorts/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
@@ -67,6 +67,19 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  // Public wrapper so other modules (InvitationsService, once an invite is
+  // accepted) can log a freshly-created user in the exact same way
+  // register()/login() do, without duplicating the claims/refresh-token
+  // logic or exposing the private issueTokens() method itself.
+  async issueTokensForUser(user: {
+    id: string;
+    organizationId: string;
+    role: UserRole;
+    plan: string;
+  }): Promise<AuthTokens> {
+    return this.issueTokens(user);
+  }
+
   async register(dto: RegisterDto): Promise<AuthTokens> {
     const existing = await this.prisma.client.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('An account with this email already exists');
@@ -119,6 +132,15 @@ export class AuthService {
     const valid = await compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
+    // PR 8: deactivated members (§11.6 team management) can't log in.
+    // NOTE: an access token issued before deactivation stays valid until it
+    // naturally expires (15 min, §9.1) — this blocks new sessions, not
+    // in-flight ones. Acceptable given the short TTL; a revocation list
+    // would be needed to close that gap, which this PR doesn't add.
+    if (user.status === UserStatus.DEACTIVATED) {
+      throw new UnauthorizedException('This account has been deactivated. Contact your workspace admin.');
+    }
+
     await this.prisma.client.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -141,6 +163,9 @@ export class AuthService {
 
     if (!record || record.revokedAt || record.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+    if (record.user.status === UserStatus.DEACTIVATED) {
+      throw new UnauthorizedException('This account has been deactivated. Contact your workspace admin.');
     }
 
     // Rotation: invalidate the old token the moment it's used once.
