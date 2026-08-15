@@ -48,7 +48,12 @@ to keep the dashboard open and watch for it.
 | `apps/api` — **Wired into every §15.1 trigger**: pipeline failure (video import + render + publish), Short published, quota warning 80%/95%, quota exceeded, payment failed, weekly digest cron (Mondays 9am) | ✅ **new** |
 | `apps/api` — Fixed `BillingModule` — it referenced `NotificationsService` since PR 6 but never imported `NotificationsModule`, so the app could not actually boot until this PR | ✅ **fixed** |
 | `apps/web` — **Notification bell** — live badge via `notification:new` WebSocket event, mark-as-read, mounted in the app shell sidebar | ✅ **new** |
-| RBAC invite UI, team management, security hardening pass | ⏳ not started |
+| `apps/api` — **`InvitationsModule`** — hashed 48h-expiry invite tokens, `POST /organizations/users/invite`, public `GET/POST /invitations/:token/*` accept flow, wired into the existing `NotificationsService.notifyTeamInvite()` (previously unused) | ✅ **new** |
+| `apps/api` — **`UsersService`** — team roster, role changes, deactivate/reactivate, last-owner guard so a workspace can never lose its final Owner | ✅ **new** |
+| `packages/db` — **`User.status`** (`ACTIVE`/`DEACTIVATED`) + **`Invitation`** table/enum, expand-only migration | ✅ **new** |
+| `apps/web` — **`/settings/users`** — team table, invite form, role dropdown, deactivate/reactivate, pending-invite list with revoke | ✅ **new** |
+| `apps/web` — **`/invite/[token]`** — public accept-invite page (preview + set name/password → logged in) | ✅ **new** |
+| Security hardening pass | ⏳ not started |
 
 ## Run it locally
 
@@ -173,10 +178,13 @@ app could not boot. This PR is what makes that dependency real.
 
 ## Known follow-ups
 
-- **RBAC invite UI + team management** still doesn't exist. `/organizations/
-  users/invite` and the underlying RBAC matrix (§9.2) are enforced, but
-  there's no page to actually invite a teammate yet — this is now the
-  clearest remaining gap before a real multi-seat customer can onboard.
+- **JWT freshness on deactivation** — a deactivated user's existing access
+  token stays valid until its natural 15-minute expiry; only new
+  logins/refreshes are blocked. A revocation list would close this but
+  isn't justified yet given the short TTL.
+- **No ownership-transfer flow** — `PATCH /organizations/users/:id` refuses
+  to grant OWNER on anyone else's behalf (403). Needed before an Owner can
+  ever leave a workspace they founded.
 - **No delivery log for email/Slack** — the `Notification` table is the
   in-app channel's source of truth only; there's no record of whether a
   given email actually sent successfully beyond the API logs.
@@ -193,11 +201,42 @@ app could not boot. This PR is what makes that dependency real.
 
 | Priority | What | Why it's next | Spec ref |
 | --- | --- | --- | --- |
-| 1 | **RBAC invite UI + team management** | `/organizations/users/invite` endpoint and RBAC matrix (§9.2) exist and are enforced, but there's no `/settings/users` page to invite teammates or change roles. `NotificationsService.notifyTeamInvite()` already exists and is ready to be called the moment this lands. | §9.2, §11.6, Week 4 |
-| 2 | **Security hardening** | Pen-test pass, IDOR tests on `/schedules`, `/analytics`, `/billing`, and the upcoming `/organizations/*` (mirroring the existing Clips/Shorts tenant-isolation tests), audit-log writes (the `AuditLog` table exists but nothing writes to it yet, despite §9.4 requiring it), rate limits on worker callbacks and the Stripe webhook route specifically. | §9.4, §18.2, §19.1, Week 7 |
-| 3 | **Agency white-label features** | Custom domain, full branding, child sub-organizations, agency dashboard, bulk CSV import (§15.2) — now that billing, quota, and notifications can all actually distinguish and inform an Agency-plan org. | §15.2, Phase 6 |
-| 4 | **Analytics API batching** | Collapse per-Short daily calls into batched multi-video requests before Short volume makes the current approach costly. | §17 follow-up |
+| 1 | **Security hardening** | Pen-test pass, IDOR tests on `/schedules`, `/analytics`, `/billing`, and the upcoming `/organizations/*` (mirroring the existing Clips/Shorts tenant-isolation tests), audit-log writes (the `AuditLog` table exists but nothing writes to it yet, despite §9.4 requiring it), rate limits on worker callbacks and the Stripe webhook route specifically. | §9.4, §18.2, §19.1, Week 7 |
+| 2 | **Agency white-label features** | Custom domain, full branding, child sub-organizations, agency dashboard, bulk CSV import (§15.2) — now that billing, quota, and notifications can all actually distinguish and inform an Agency-plan org. | §15.2, Phase 6 |
+| 3 | **Analytics API batching** | Collapse per-Short daily calls into batched multi-video requests before Short volume makes the current approach costly. | §17 follow-up |
 
-RBAC invites are next — right now the only way to add a teammate is
-directly in the database, and that's not a place a real SaaS product can
-stay for long either.
+## PR 8 — RBAC Invite UI + Team Management (§9.2, §11.6, Week 4)
+
+Closes the gap the README has flagged as "Next up #1" since PR 6: RBAC and
+`/organizations/users/invite` were enforced/documented but there was no way
+to actually invite a teammate short of writing to Postgres directly.
+
+## What this ships
+
+- **Invitation flow**: Admin/Owner invites by email + role → hashed,
+  48h-expiry token → email via the existing `NotificationsService.notifyTeamInvite()`
+  (already existed, unused until now) → public accept page creates the
+  account and logs the person straight in.
+- **Team management**: `/settings/users` — role changes, deactivate/reactivate,
+  pending-invite list with revoke.
+- **`User.status`** (`ACTIVE` / `DEACTIVATED`) — login rejects deactivated
+  users. Last-owner guard on both role-change-away-from-OWNER and
+  deactivate, so a workspace can never end up with zero active Owners.
+- Ownership transfer is explicitly out of scope for the role-change endpoint
+  (it's a higher-stakes action than a role bump) — flagged with a clear
+  403 rather than silently allowed.
+
+## Deliberately deferred (see README "Next up" #2)
+
+- **Audit log writes** — `AuditLog` table still isn't written to. This PR
+  doesn't scope-creep into that; it's the next PR per the existing roadmap.
+- **JWT freshness on deactivation** — a deactivated user's existing access
+  token (15-min expiry) still works until it naturally expires; only new
+  logins are blocked. Acceptable given the short TTL; noted as a known gap
+  rather than solved with a token-revocation list this PR doesn't need.
+
+## Migration
+
+`20260809100000_add_invitations_and_user_status` — expand-only per §20.5:
+new `InvitationStatus`/`UserStatus` enums, new nullable-default `User.status`
+column, new `Invitation` table. Safe to run while the app is live.
