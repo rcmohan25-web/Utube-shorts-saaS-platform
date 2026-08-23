@@ -13,6 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { UserRole, VideoStatus } from '@shorts/db';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Public } from '../common/decorators/public.decorator';
@@ -51,7 +52,17 @@ export class VideosController {
     return this.videos.findOne(id, req.organizationId);
   }
 
-  // Worker -> API callback. Public to the JWT guard, but locked down by InternalSecretGuard.
+  // Worker -> API callback. Public to the JWT guard, but locked down by
+  // InternalSecretGuard.
+  //
+  // PR 9 (Security Hardening, §19.1): explicit 'internal' throttle bucket
+  // (300/min, see app.module.ts) instead of the default 100/min user-facing
+  // limit. Every download/transcription/clip-detection stage PATCHes this
+  // route, so a normal burst of parallel video imports can legitimately
+  // exceed the default limit; the internal bucket is deliberately generous
+  // while still capping a runaway retry storm or a brute-force attempt
+  // against API_INTERNAL_SECRET.
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Patch(':id/status')
@@ -62,6 +73,7 @@ export class VideosController {
   // clip-worker -> API callback after GPT-4o scoring (§6.2). Lives here
   // (rather than on ClipsController) since the URL is a sub-resource of
   // /videos; ClipsService itself stays in the clips module.
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Post(':id/clips')

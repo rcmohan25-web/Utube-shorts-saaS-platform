@@ -1,10 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { UserRole, UserStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditLogService } from '../audit/audit-log.service';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditLog: AuditLogService,
+  ) {}
 
   async list(organizationId: string) {
     return this.prisma.client.user.findMany({
@@ -17,6 +21,8 @@ export class UsersService {
     });
   }
 
+  // Destructive/privilege-changing: audit-logged per §20.13
+  // (PR 9, Security Hardening).
   async updateRole(targetUserId: string, newRole: UserRole, organizationId: string, requestingUserId: string) {
     const target = await this.prisma.client.user.findFirst({ where: { id: targetUserId, organizationId } });
     if (!target) throw new NotFoundException('User not found');
@@ -32,10 +38,21 @@ export class UsersService {
       throw new ForbiddenException('Transferring ownership requires a dedicated flow — contact support');
     }
 
-    return this.prisma.client.user.update({
+    const updated = await this.prisma.client.user.update({
       where: { id: targetUserId },
       data: { role: newRole },
     });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: requestingUserId,
+      action: 'user.role_changed',
+      resourceType: 'user',
+      resourceId: targetUserId,
+      metadata: { fromRole: target.role, toRole: newRole },
+    });
+
+    return updated;
   }
 
   async deactivate(targetUserId: string, organizationId: string, requestingUserId: string) {
@@ -49,20 +66,40 @@ export class UsersService {
       await this.assertNotLastOwner(organizationId, targetUserId);
     }
 
-    return this.prisma.client.user.update({
+    const updated = await this.prisma.client.user.update({
       where: { id: targetUserId },
       data: { status: UserStatus.DEACTIVATED },
     });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: requestingUserId,
+      action: 'user.deactivated',
+      resourceType: 'user',
+      resourceId: targetUserId,
+    });
+
+    return updated;
   }
 
-  async reactivate(targetUserId: string, organizationId: string) {
+  async reactivate(targetUserId: string, organizationId: string, requestingUserId: string) {
     const target = await this.prisma.client.user.findFirst({ where: { id: targetUserId, organizationId } });
     if (!target) throw new NotFoundException('User not found');
 
-    return this.prisma.client.user.update({
+    const updated = await this.prisma.client.user.update({
       where: { id: targetUserId },
       data: { status: UserStatus.ACTIVE },
     });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: requestingUserId,
+      action: 'user.reactivated',
+      resourceType: 'user',
+      resourceId: targetUserId,
+    });
+
+    return updated;
   }
 
   // Guards against a workspace ending up with zero active Owners — nobody

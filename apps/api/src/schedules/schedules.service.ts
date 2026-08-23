@@ -21,6 +21,11 @@ import { QuotaService } from '../billing/quota.service';
 // on markFailed(). Also drives QuotaService.checkAndNotifyThreshold()'s
 // QUOTA_WARNING at 80%/95%, which reads the same UsageEvent write below.
 import { NotificationsService } from '../notifications/notifications.service';
+// PR 9 (Security Hardening, §9.4/§20.13): cancel() is a destructive action
+// and must be appended to AuditLog. Injected last so the existing
+// publish.processor.test.js constructor call sites (which never exercise
+// cancel()) keep working unmodified.
+import { AuditLogService } from '../audit/audit-log.service';
 
 @Injectable()
 export class SchedulesService {
@@ -34,6 +39,7 @@ export class SchedulesService {
     private quota: QuotaService,
     private notifications: NotificationsService,
     @InjectQueue(QUEUE_NAMES.PUBLISH) private publishQueue: Queue,
+    private auditLog: AuditLogService,
   ) {}
 
   async create(dto: CreateScheduleDto, organizationId: string, userId: string) {
@@ -221,7 +227,9 @@ export class SchedulesService {
     );
   }
 
-  async cancel(scheduleId: string, organizationId: string) {
+  // Destructive: pulls a schedule out of the publish queue. Audit-logged
+  // per §20.13 (PR 9, Security Hardening).
+  async cancel(scheduleId: string, organizationId: string, actorUserId: string) {
     const schedule = await this.prisma.client.schedule.findFirst({
       where: { id: scheduleId, organizationId },
     });
@@ -253,6 +261,15 @@ export class SchedulesService {
     const updated = await this.prisma.client.schedule.update({
       where: { id: scheduleId },
       data: { status: 'CANCELLED' },
+    });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: actorUserId,
+      action: 'schedule.cancel',
+      resourceType: 'schedule',
+      resourceId: scheduleId,
+      metadata: { shortId: schedule.shortId, scheduledAt: schedule.scheduledAt.toISOString() },
     });
 
     this.logger.log({ msg: 'schedule.cancelled', scheduleId, organizationId });

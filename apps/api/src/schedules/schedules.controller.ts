@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { IsString } from 'class-validator';
 import { UserRole } from '@shorts/db';
 import { Public } from '../common/decorators/public.decorator';
@@ -77,7 +78,8 @@ export class SchedulesController {
   @Roles(UserRole.EDITOR, UserRole.ADMIN, UserRole.OWNER)
   @HttpCode(HttpStatus.OK)
   cancel(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.schedules.cancel(id, req.organizationId);
+    // PR 9: actor id now threaded through for the AuditLog entry.
+    return this.schedules.cancel(id, req.organizationId, req.user.sub);
   }
 
   // ── Internal worker callbacks — no JWT, locked by InternalSecretGuard ───
@@ -86,7 +88,15 @@ export class SchedulesController {
   // because each has a different payload shape and different service logic.
   // Keeping them separate makes the controller readable and the service
   // methods independently testable.
+  //
+  // PR 9 (Security Hardening, §19.1): explicit 'internal' throttle bucket
+  // (300/min, configured in app.module.ts) rather than the default 100/min
+  // user-facing limit — legitimate worker traffic can burst when many
+  // parallel render/publish jobs finish at once, but an unbounded rate
+  // would let a compromised or misbehaving worker hammer the DB, and it
+  // slows any attempt to brute-force API_INTERNAL_SECRET.
 
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Patch(':id/complete')
@@ -94,6 +104,7 @@ export class SchedulesController {
     return this.schedules.markPublished(id, body.organizationId, body.youtubeVideoId);
   }
 
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Patch(':id/failed')
@@ -104,6 +115,7 @@ export class SchedulesController {
   // Quota exceeded is per-schedule (the failing schedule ID identifies
   // which channel hit the limit), not per-channel — the service handles
   // the cascade to all pending schedules for that channel.
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Patch(':id/quota-exceeded')
