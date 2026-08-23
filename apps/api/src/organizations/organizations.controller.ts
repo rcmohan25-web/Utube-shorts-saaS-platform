@@ -22,7 +22,8 @@ export class OrganizationsController {
   @Put('branding')
   @Roles(UserRole.ADMIN, UserRole.OWNER)
   updateBranding(@Body() dto: UpdateOrganizationBrandingDto, @Req() req: AuthenticatedRequest) {
-    return this.organizations.updateBranding(req.organizationId, dto);
+    // PR 9: actor id now threaded through for the AuditLog entry.
+    return this.organizations.updateBranding(req.organizationId, dto, req.user.sub);
   }
 
   // §11.6 /settings/users — team roster
@@ -48,7 +49,8 @@ export class OrganizationsController {
   @Delete('users/invitations/:id')
   @Roles(UserRole.ADMIN, UserRole.OWNER)
   revokeInvitation(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.invitations.revoke(id, req.organizationId);
+    // PR 9: actor id now threaded through for the AuditLog entry.
+    return this.invitations.revoke(id, req.organizationId, req.user.sub);
   }
 
   // §8.2 /organizations/users/:id — "Change role (ADMIN+)"
@@ -67,6 +69,7 @@ export class OrganizationsController {
   @Patch('users/:id/reactivate')
   @Roles(UserRole.ADMIN, UserRole.OWNER)
   reactivateUser(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.users.reactivate(id, req.organizationId);
+    // PR 9: actor id now threaded through for the AuditLog entry.
+    return this.users.reactivate(id, req.organizationId, req.user.sub);
   }
 }

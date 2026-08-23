@@ -20,6 +20,7 @@ export class ClipsController {
   @Patch(':id/reject')
   @Roles(UserRole.EDITOR, UserRole.ADMIN, UserRole.OWNER)
   reject(@Param('id') id: string, @Body() dto: RejectClipDto, @Req() req: AuthenticatedRequest) {
-    return this.clips.reject(id, req.organizationId, dto);
+    // PR 9: actor id now threaded through for the AuditLog entry.
+    return this.clips.reject(id, req.organizationId, dto, req.user.sub);
   }
 }

@@ -1,31 +1,37 @@
 # YouTube Shorts Automation & SaaS Platform
 
 This repo is the implementation of the roadmap/SRS/architecture docs.
-Status below reflects the **Notifications milestone** (§15, PR 7): on top
-of billing and quota enforcement, the platform now actually tells people
-when something happens — a Short is ready, a publish succeeded or failed,
-quota is running low, or a payment bounced — instead of requiring someone
-to keep the dashboard open and watch for it.
+Status below reflects the **Security Hardening milestone** (§19.1, PR 9):
+on top of team management, the platform now keeps an immutable audit trail
+of every destructive action, rate-limits internal worker callbacks and the
+Stripe webhook separately from user traffic, and has regression tests that
+lock in the tenant-isolation guarantee so it can't silently regress.
 
 > Paste URL → DB row → job dispatched → video downloaded & audio extracted →
 > transcribed with word timestamps → GPT-4o scores candidate clips → human
-> approves one → render-worker crops/captions/encodes it → **"Shorts ready"
-> notification (batched, max 1/hour)** → human approves → quota check
+> approves one → render-worker crops/captions/encodes it → "Shorts ready"
+> notification (batched, max 1/hour) → human approves → quota check
 > (§13.2) → schedule → publish-worker uploads it to YouTube at the
-> scheduled time → **"Short published" notification (in-app + Slack)** →
+> scheduled time → "Short published" notification (in-app + Slack) →
 > 24h later, and every day after via a 3am UTC cron, real view/watch-time/
 > engagement data flows back from the YouTube Analytics API into the
 > dashboard → a Stripe subscription determines the org's plan and monthly
-> quota → **and at 80%/95% of that quota, or if a payment fails, or if any
+> quota → at 80%/95% of that quota, or if a payment fails, or if any
 > pipeline stage fails outright, the org owner gets an email (and a bell
-> icon in the app) instead of silence.**
+> icon in the app) instead of silence → admins invite teammates, change
+> roles, and deactivate accounts from `/settings/users` → **and every one
+> of those destructive actions — disconnecting a channel, rejecting a
+> clip or Short, cancelling a schedule, changing someone's role,
+> deactivating a user, revoking an invite, updating org branding — is now
+> appended immutably to the `AuditLog` table, so "who did this and when"
+> is always answerable.**
 
 ## What's built
 
 | Layer | Status |
 | --- | --- |
 | Monorepo (pnpm workspaces + Turborepo) | ✅ scaffolded |
-| `packages/db` — full Prisma schema (multi-tenant, 14 tables incl. `Notification`) | ✅ |
+| `packages/db` — full Prisma schema (multi-tenant, 16 tables incl. `Notification`, `Invitation`) | ✅ |
 | `packages/shared` — cross-app types incl. `NotificationEvent` | ✅ |
 | `apps/api` — Auth (register/login/refresh-rotation/me) | ✅ |
 | `apps/api` — Tenant isolation (`TenantInterceptor`, RBAC `RolesGuard`) | ✅ |
@@ -43,26 +49,26 @@ to keep the dashboard open and watch for it.
 | `apps/api` — Analytics domain + daily sync cron (3am UTC) + 24h-post-publish first-sync job (§17.1) | ✅ |
 | `apps/api` — `QuotaService` (§13.2), Stripe `BillingService` (Checkout, Portal, signature-verified webhook) | ✅ |
 | `apps/web` — Settings, Videos, Shorts, `/scheduler`, `/analytics`, `/billing` | ✅ |
-| `apps/api` — **`NotificationsModule`** — email (Resend HTTP adapter, no SDK dep) + in-app (`Notification` table) + Slack (`Organization.webhookUrl`), routed per §15.1's channel matrix | ✅ **new** |
-| `apps/api` — **Batched "Shorts ready" email** — debounced via a delayed BullMQ job keyed on `organizationId` (jobId dedupe = free coalescing), default 15-min window, configurable via `NOTIFICATIONS_BATCH_WINDOW_MS` | ✅ **new** |
-| `apps/api` — **Wired into every §15.1 trigger**: pipeline failure (video import + render + publish), Short published, quota warning 80%/95%, quota exceeded, payment failed, weekly digest cron (Mondays 9am) | ✅ **new** |
-| `apps/api` — Fixed `BillingModule` — it referenced `NotificationsService` since PR 6 but never imported `NotificationsModule`, so the app could not actually boot until this PR | ✅ **fixed** |
-| `apps/web` — **Notification bell** — live badge via `notification:new` WebSocket event, mark-as-read, mounted in the app shell sidebar | ✅ **new** |
-| `apps/api` — **`InvitationsModule`** — hashed 48h-expiry invite tokens, `POST /organizations/users/invite`, public `GET/POST /invitations/:token/*` accept flow, wired into the existing `NotificationsService.notifyTeamInvite()` (previously unused) | ✅ **new** |
-| `apps/api` — **`UsersService`** — team roster, role changes, deactivate/reactivate, last-owner guard so a workspace can never lose its final Owner | ✅ **new** |
-| `packages/db` — **`User.status`** (`ACTIVE`/`DEACTIVATED`) + **`Invitation`** table/enum, expand-only migration | ✅ **new** |
-| `apps/web` — **`/settings/users`** — team table, invite form, role dropdown, deactivate/reactivate, pending-invite list with revoke | ✅ **new** |
-| `apps/web` — **`/invite/[token]`** — public accept-invite page (preview + set name/password → logged in) | ✅ **new** |
-| Security hardening pass | ⏳ not started |
+| `apps/api` — `NotificationsModule` — email (Resend HTTP adapter) + in-app + Slack, routed per §15.1's channel matrix | ✅ |
+| `apps/api` — `InvitationsModule` — hashed 48h-expiry invite tokens, invite/accept flow | ✅ |
+| `apps/api` — `UsersService` — team roster, role changes, deactivate/reactivate, last-owner guard | ✅ |
+| `apps/web` — `/settings/users` + `/invite/[token]` — team management + public accept page | ✅ |
+| `apps/api` — **`AuditLogModule` (`AuditLogService`)** — global, append-only writer for the `AuditLog` table that has existed in the schema since the very first migration but was never actually written to | ✅ **new** |
+| `apps/api` — **Wired into every destructive action**: `channel.disconnect`, `clip.reject`, `short.reject`, `schedule.cancel`, `user.role_changed`, `user.deactivated`, `user.reactivated`, `invitation.revoked`, `organization.branding_updated` | ✅ **new** |
+| `apps/api` — **Named throttle buckets** (`default` 100/min, `internal` 300/min, `webhook` 30/min) — worker callbacks (`/videos/:id/status`, `/videos/:id/clips`, `/shorts`, `/schedules/:id/complete`\|`/failed`\|`/quota-exceeded`) and the Stripe webhook now rate-limit separately from user-facing traffic | ✅ **new** |
+| `apps/api` — **`InternalSecretGuard` hardened**: fails closed if `API_INTERNAL_SECRET` is unset, uses `crypto.timingSafeEqual` instead of `!==` to avoid leaking timing information to a brute-force attempt | ✅ **new** |
+| `apps/api` — **Tenant-isolation regression test suite** (`test/tenant-isolation.test.js`) — asserts Org B cannot read/mutate Org A's channels, clips, shorts, schedules, or analytics via direct ID (§18.2's critical test case) | ✅ **new** |
+| Full OWASP-ZAP / manual pen-test pass | ⏳ not started (see "Known follow-ups") |
 
 ## Run it locally
 
 Requires Node 20+, pnpm 9+, Python 3.11+, Docker, and a Stripe account
-(test mode is fine). Email delivery is optional in dev — see below.
+(test mode is fine). Email delivery is optional in dev — see the
+Notifications section of prior release notes.
 
 ```bash
-# 1. Install JS deps — no new packages this phase (EmailService/SlackService
-#    use plain fetch, not a vendor SDK)
+# 1. Install JS deps — no new packages this phase (AuditLogService only
+#    uses the existing PrismaService; no new dependency)
 corepack enable && corepack prepare pnpm@9.7.0 --activate
 pnpm install
 
@@ -77,22 +83,13 @@ cp services/clip-worker/.env.example services/clip-worker/.env
 cp services/transcription-worker/.env.example services/transcription-worker/.env
 cp services/render-worker/.env.example services/render-worker/.env
 cp services/publish-worker/.env.example services/publish-worker/.env
-# Fill in: ENCRYPTION_KEY, YouTube OAuth, OPENAI_API_KEY, S3/R2, Stripe
-# (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_*).
-#
-# NEW this phase — Notifications (apps/api/.env):
-#   RESEND_API_KEY  — leave blank in dev; emails are logged to the API
-#                      console instead of sent, so nothing blocks without
-#                      a Resend account.
-#   EMAIL_FROM       — sender address once you do configure Resend.
-#   NOTIFICATIONS_BATCH_WINDOW_MS — debounce window for the batched
-#                      "Shorts ready" email (default 15 min).
-#   Slack delivery needs no new env var — it reuses the per-org
-#   Organization.webhookUrl field (already in the schema; set it via a
-#   future /settings UI or directly in Prisma Studio for now).
+# Fill in: ENCRYPTION_KEY, YouTube OAuth, OPENAI_API_KEY, S3/R2, Stripe,
+# API_INTERNAL_SECRET (shared with every worker's .env — this is what
+# InternalSecretGuard now fails closed without, so don't leave it blank).
 
-# 4. Migrate + seed DB — this phase adds one new table (Notification) plus
-#    one new enum (NotificationType); everything else was already there.
+# 4. Migrate + seed DB — NO new migration this phase. AuditLog has existed
+#    since the very first migration; this PR only adds application code
+#    that writes to it.
 pnpm --filter @shorts/db generate
 pnpm --filter @shorts/db migrate:dev
 pnpm --filter @shorts/db seed
@@ -105,138 +102,164 @@ stripe listen --forward-to localhost:3001/api/v1/billing/webhook
 pnpm dev
 ```
 
-## Seeing notifications fire
+## Seeing the audit trail
 
-No special setup is required beyond the steps above — every trigger below
-is wired into an existing flow:
+No special setup is required — every destructive action already goes
+through the normal UI:
 
-1. **Shorts ready** — approve a clip on `/videos/:id`; once render-worker
-   finishes, a batch job is queued (§15.1: max 1 email/hour) and fires
-   after `NOTIFICATIONS_BATCH_WINDOW_MS` (15 min by default — lower this
-   env var temporarily if you want to see it faster in dev). The in-app
-   bell updates immediately regardless, since in-app delivery isn't
-   batched — only the email is.
-2. **Short published** — schedule a Short (`/shorts` → Approve → pick a
-   time ≥5 min out) and wait for `/scheduler` to flip it to `PUBLISHED`.
-   Fires in-app + Slack (if `Organization.webhookUrl` is set) the moment
-   `SchedulesService.markPublished()` runs.
-3. **Pipeline failure** — any `VideoStatus.FAILED` transition, any
-   `Short` created at `FAILED` by render-worker, or any `Schedule` marked
-   `FAILED` (including the §7.3 stuck-schedule cron) fires this.
-4. **Quota warning / exceeded** — publish Shorts until you cross 80%,
-   95%, or 100% of `Organization.quotaShortsPerMonth`. For fast local
-   testing without a real 40-Short cycle, lower `quotaShortsPerMonth` on
-   your seeded org directly via `pnpm --filter @shorts/db studio`.
-5. **Payment failed** — trigger Stripe's `invoice.payment_failed` test
-   event via the Stripe CLI: `stripe trigger invoice.payment_failed`.
-6. **Weekly digest** — runs Mondays 9am UTC for any org with analytics or
-   published-Short activity in the trailing 7 days; skips silent orgs.
+1. Disconnect a channel from `/settings` → `channel.disconnect`.
+2. Reject a clip on `/videos/:id`, or a Short on `/shorts` → `clip.reject`
+   / `short.reject`.
+3. Cancel a pending schedule from `/scheduler` → `schedule.cancel`.
+4. Change someone's role, deactivate/reactivate them, or revoke a pending
+   invite from `/settings/users` → `user.role_changed` / `user.deactivated`
+   / `user.reactivated` / `invitation.revoked`.
+5. Update the org's Slack webhook URL via `PUT /organizations/branding` →
+   `organization.branding_updated`.
 
-Check `GET /notifications` (or the bell icon) for the in-app feed, and the
-API console for logged emails if `RESEND_API_KEY` is unset.
+There's no admin UI for the audit log yet (see "Known follow-ups") — inspect
+rows directly via `pnpm --filter @shorts/db studio` and open the `AuditLog`
+table, or query it in `psql`:
+
+```sql
+SELECT "action", "userId", "resourceType", "resourceId", "metadata", "createdAt"
+FROM "AuditLog"
+WHERE "organizationId" = '<your org id>'
+ORDER BY "createdAt" DESC
+LIMIT 20;
+```
+
+## Verifying the rate limits
+
+- **Worker callbacks** (`internal` bucket, 300/min): any burst of
+  `PATCH /videos/:id/status` calls under 300/min from clip-worker,
+  transcription-worker, etc. is unaffected. Push past that in a load test
+  and you'll get `429 Too Many Requests` — this is deliberately generous
+  so normal pipeline bursts never trip it.
+- **Stripe webhook** (`webhook` bucket, 30/min): `stripe trigger` events in
+  local dev are nowhere near this limit; it exists as defense in depth on
+  top of `Stripe-Signature` verification, not as the primary control.
+- **Everything else** stays on the pre-existing `default` bucket (100/min).
 
 ## Why these specific choices
 
-**"Shorts ready" batching uses a delayed BullMQ job keyed on
-`organizationId`, not a cron or an in-memory debounce.** A delayed job with
-a fixed `jobId` (`shorts-ready_{organizationId}`) is naturally idempotent:
-re-adding it while one is already pending is a no-op (same pattern as
-every other job dispatch in this codebase — video-download, publish,
-analytics-sync). This means N renders in a burst produce exactly one email
-without any new coordination primitive, and it survives an API restart
-(unlike an in-memory timer would).
+**`AuditLogService.record()` never catches its own errors.** Every other
+best-effort side channel in this codebase (`NotificationsService.notify()`,
+Slack posts) is wrapped in try/catch at the call site so a delivery failure
+never blocks the state transition it's describing. Audit logging is
+different: a notification that silently fails to send is a UX gap, but an
+audit entry that silently fails to write is a compliance gap. If
+`auditLog.record()` throws, the caller — and therefore the HTTP response —
+sees it, rather than the operation appearing to succeed with no trace it
+ever happened.
 
-**`NotificationBatchProcessor` re-counts REVIEW Shorts at fire time rather
-than trusting a count captured when the job was queued.** Some of those
-Shorts may have already been approved or rejected by the time the batch
-window elapses; re-querying means the email always reflects the truth at
-send time, and a zero-count batch is a silent no-op rather than a
-misleading "0 Shorts ready" email.
+**`AuditLogModule` is `@Global()`.** The alternative was importing it into
+eight different feature modules (`ChannelsModule`, `ClipsModule`,
+`ShortsModule`, `SchedulesModule`, `OrganizationsModule`,
+`InvitationsModule`, ...) for a single shared, stateless service with no
+per-module configuration. `StorageModule` and `CryptoModule` already use
+this pattern for the same reason.
 
-**Every call site wraps `notifications.notify()` in try/catch and never
-lets a notification failure block or roll back the action it's
-describing.** A Resend outage must never prevent a Short from being marked
-`PUBLISHED`, and a malformed Slack webhook must never block quota
-enforcement. This mirrors the existing pattern in `SchedulesService` for
-`analytics.scheduleFirstSync()` — notification delivery is best-effort
-plumbing bolted onto an already-correct state transition, not part of the
-transition's own correctness.
+**Three named throttle buckets instead of one flat limit.** A single
+100/min ceiling shared between user clicks and worker callbacks meant a
+legitimate burst of five parallel video imports — each firing several
+`PATCH /videos/:id/status` calls as it moves through PENDING →
+DOWNLOADING → DOWNLOADED → TRANSCRIBING → READY — could plausibly trip
+the same limit protecting the login form. Splitting `internal` (generous,
+worker-only) from `default` (user-facing) and `webhook` (Stripe-only,
+tight) lets each traffic shape have an appropriate ceiling without loosening
+protection on the routes that actually need it tight.
 
-**`QuotaService.checkAndNotifyThreshold()` fires on the publish path
-(`SchedulesService.markPublished()`), not on a polling cron.** It compares
-`(used-1)/quota` against `used/quota` so exactly one notification fires
-for the highest threshold a given publish just crossed — never both 80%
-and 95% at once, and never a repeat once an org is already past a
-threshold. This piggybacks on the same `UsageEvent` write that already
-exists for quota *consumption*, so there's no new source of truth to keep
-in sync.
+**`InternalSecretGuard` now uses `crypto.timingSafeEqual` and fails closed
+on a missing secret.** The original `provided !== process.env.X` comparison
+is a real (if narrow) timing side-channel on a route that's `@Public()` to
+the JWT guard by design — worth closing given how cheap the fix is. Failing
+closed when `API_INTERNAL_SECRET` isn't configured turns a silent
+misconfiguration (every worker callback quietly rejected, or worse,
+accepted) into an explicit, loud `UnauthorizedException` instead.
 
-**`BillingModule` now imports `NotificationsModule`.** `BillingService`
-has depended on `NotificationsService` in its constructor since PR 6, but
-`BillingModule` never actually imported the module that provides it — the
-app could not boot. This PR is what makes that dependency real.
+**Tenant-isolation tests assert the *absence* of cross-org access, not just
+the presence of scoping code.** §18.2's critical test case has been true in
+this codebase since day one because every service already calls
+`findFirst({ where: { id, organizationId } })`, but nothing enforced that
+staying true. `test/tenant-isolation.test.js` simulates Prisma's real
+behavior (a tenant-scoped query returns `null` for a row that exists under
+a different org) so that if a future PR ever "simplifies" one of these
+queries back to `findFirst({ where: { id } })`, CI fails immediately
+instead of the regression waiting for a real IDOR report.
 
 ## Known follow-ups
 
-- **JWT freshness on deactivation** — a deactivated user's existing access
-  token stays valid until its natural 15-minute expiry; only new
-  logins/refreshes are blocked. A revocation list would close this but
-  isn't justified yet given the short TTL.
-- **No ownership-transfer flow** — `PATCH /organizations/users/:id` refuses
-  to grant OWNER on anyone else's behalf (403). Needed before an Owner can
-  ever leave a workspace they founded.
-- **No delivery log for email/Slack** — the `Notification` table is the
-  in-app channel's source of truth only; there's no record of whether a
-  given email actually sent successfully beyond the API logs.
-- **No per-user notification preferences** — every eligible role gets
-  every applicable email; there's no opt-out yet.
-- **Grace-period downgrade** on subscription cancellation — unchanged
-  from the prior phase, still hard-downgrades to Starter immediately.
-- **Analytics API call volume at scale** — still one YouTube Analytics API
-  call per Short per day; batching remains a follow-up.
-- **`subscribersGained` double-counting** — unchanged; needs a
-  channel-level daily sync alongside the per-video one.
+- **No admin UI for the audit log yet** — inspect via Prisma Studio or
+  direct SQL (see above). A `/settings/audit-log` page with filtering by
+  action/user/date is the natural next increment, not scoped into this PR.
+- **`ipAddress` isn't captured on any `AuditLogEntry` yet** — every call
+  site would need `@Req() req` threaded through to `req.ip`, which is
+  mechanical but touches a lot of controllers. Flagged rather than done
+  half-consistently across only some of the nine action types.
+- **Billing actions (`checkout`, `portal`) aren't audit-logged** — they're
+  financial but not destructive in the IDOR sense, and Stripe's own
+  dashboard is already the audit trail for money movement.
+- **No full OWASP-ZAP / manual pen-test pass yet** — §18.1 calls this out
+  as its own testing tier; this PR's regression tests cover the specific
+  IDOR pattern the spec calls out by name, not a general security audit.
+- **JWT freshness on deactivation** — unchanged from the prior phase: a
+  deactivated user's existing access token stays valid until its natural
+  15-minute expiry.
+- **No ownership-transfer flow** — unchanged: `PATCH /organizations/users/:id`
+  still refuses to grant `OWNER` on anyone else's behalf.
+- **No delivery log for email/Slack** — unchanged.
+- **No per-user notification preferences** — unchanged.
+- **Grace-period downgrade** on subscription cancellation — unchanged,
+  still hard-downgrades to Starter immediately.
+- **Analytics API call volume at scale** — unchanged, still one call per
+  Short per day.
 
 ## Next up
 
 | Priority | What | Why it's next | Spec ref |
 | --- | --- | --- | --- |
-| 1 | **Security hardening** | Pen-test pass, IDOR tests on `/schedules`, `/analytics`, `/billing`, and the upcoming `/organizations/*` (mirroring the existing Clips/Shorts tenant-isolation tests), audit-log writes (the `AuditLog` table exists but nothing writes to it yet, despite §9.4 requiring it), rate limits on worker callbacks and the Stripe webhook route specifically. | §9.4, §18.2, §19.1, Week 7 |
-| 2 | **Agency white-label features** | Custom domain, full branding, child sub-organizations, agency dashboard, bulk CSV import (§15.2) — now that billing, quota, and notifications can all actually distinguish and inform an Agency-plan org. | §15.2, Phase 6 |
+| 1 | **Agency white-label features** | Custom domain, full branding, child sub-organizations, agency dashboard, bulk CSV import (§15.2) — now that billing, quota, notifications, and audit logging can all actually distinguish and inform an Agency-plan org. | §15.2, Phase 6 |
+| 2 | **Audit log admin UI** | `/settings/audit-log` — filterable table over the data this PR started writing; nobody can see the trail today without direct DB access. | §9.4 follow-up |
 | 3 | **Analytics API batching** | Collapse per-Short daily calls into batched multi-video requests before Short volume makes the current approach costly. | §17 follow-up |
 
-## PR 8 — RBAC Invite UI + Team Management (§9.2, §11.6, Week 4)
+## PR 9 — Security Hardening (§9.4, §18.2, §19.1, Week 7)
 
-Closes the gap the README has flagged as "Next up #1" since PR 6: RBAC and
-`/organizations/users/invite` were enforced/documented but there was no way
-to actually invite a teammate short of writing to Postgres directly.
+Closes the top item the README has flagged as "Next up #1" since PR 7:
+audit-log writes (the `AuditLog` table existed but nothing wrote to it),
+IDOR regression tests on the domains added since the multi-tenant model
+first shipped, and rate limits distinguishing worker/webhook traffic from
+user traffic.
 
-## What this ships
+### What this ships
 
-- **Invitation flow**: Admin/Owner invites by email + role → hashed,
-  48h-expiry token → email via the existing `NotificationsService.notifyTeamInvite()`
-  (already existed, unused until now) → public accept page creates the
-  account and logs the person straight in.
-- **Team management**: `/settings/users` — role changes, deactivate/reactivate,
-  pending-invite list with revoke.
-- **`User.status`** (`ACTIVE` / `DEACTIVATED`) — login rejects deactivated
-  users. Last-owner guard on both role-change-away-from-OWNER and
-  deactivate, so a workspace can never end up with zero active Owners.
-- Ownership transfer is explicitly out of scope for the role-change endpoint
-  (it's a higher-stakes action than a role bump) — flagged with a clear
-  403 rather than silently allowed.
+- **`AuditLogModule` / `AuditLogService`** — global, append-only writer.
+  Nine destructive actions across seven services now call
+  `auditLog.record(...)` immediately after their state-changing write:
+  `channel.disconnect`, `clip.reject`, `short.reject`, `schedule.cancel`,
+  `user.role_changed`, `user.deactivated`, `user.reactivated`,
+  `invitation.revoked`, `organization.branding_updated`.
+- **Named throttle buckets** (`default`/`internal`/`webhook`) registered in
+  `ThrottlerModule.forRoot(...)`, applied per-route via
+  `@Throttle({ internal: {...} })` on every worker-callback route and
+  `@Throttle({ webhook: {...} })` on the Stripe webhook.
+- **`InternalSecretGuard` hardened** — fails closed on an unset
+  `API_INTERNAL_SECRET`, compares with `crypto.timingSafeEqual` instead of
+  `!==`.
+- **`test/tenant-isolation.test.js`** — new regression suite asserting Org
+  B cannot read or mutate Org A's channels/clips/shorts/schedules/analytics
+  via direct ID, across every service touched by this PR plus the
+  pre-existing ones.
+- **No schema migration** — `AuditLog` has existed since
+  `20260622165401_init`; this PR is pure application code.
 
-## Deliberately deferred (see README "Next up" #2)
+### Deliberately deferred (see README "Known follow-ups")
 
-- **Audit log writes** — `AuditLog` table still isn't written to. This PR
-  doesn't scope-creep into that; it's the next PR per the existing roadmap.
-- **JWT freshness on deactivation** — a deactivated user's existing access
-  token (15-min expiry) still works until it naturally expires; only new
-  logins are blocked. Acceptable given the short TTL; noted as a known gap
-  rather than solved with a token-revocation list this PR doesn't need.
+- Audit log admin UI, `ipAddress` capture, billing action logging, and the
+  full pen-test pass are explicitly out of scope — each is either a
+  separate UI surface or a manual testing exercise that doesn't belong
+  bundled into this backend-hardening PR.
 
-## Migration
+### Migration
 
-`20260809100000_add_invitations_and_user_status` — expand-only per §20.5:
-new `InvitationStatus`/`UserStatus` enums, new nullable-default `User.status`
-column, new `Invitation` table. Safe to run while the app is live.
+None. This PR does not touch `packages/db/prisma/schema.prisma`.

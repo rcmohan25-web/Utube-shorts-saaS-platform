@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { VideoGateway } from '../websockets/video.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from '../audit/audit-log.service';
 import { CreateShortDto } from './dto/create-short.dto';
 import { RejectShortDto } from './dto/reject-short.dto';
 import { transitionShort } from './short-status.machine';
@@ -15,6 +16,7 @@ export class ShortsService {
     private storage: StorageService,
     private videoGateway: VideoGateway,
     private notifications: NotificationsService,
+    private auditLog: AuditLogService,
   ) {}
 
   // Worker -> API callback (render-worker). Always a create — see
@@ -94,11 +96,24 @@ export class ShortsService {
     });
   }
 
+  // Destructive: discards a rendered Short. Audit-logged per §20.13
+  // (PR 9, Security Hardening).
   async reject(id: string, organizationId: string, reviewedBy: string, dto: RejectShortDto) {
-    return transitionShort(this.prisma, id, organizationId, ShortStatus.REJECTED, {
+    const updated = await transitionShort(this.prisma, id, organizationId, ShortStatus.REJECTED, {
       reviewedBy,
       reviewedAt: new Date(),
       rejectionReason: dto.reason ?? null,
     });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: reviewedBy,
+      action: 'short.reject',
+      resourceType: 'short',
+      resourceId: id,
+      metadata: { reason: dto.reason ?? null },
+    });
+
+    return updated;
   }
 }

@@ -6,6 +6,7 @@ import { InvitationStatus, UserRole } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
+import { AuditLogService } from '../audit/audit-log.service';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { AcceptInviteDto } from './dto/accept-invite.dto';
 
@@ -25,6 +26,7 @@ export class InvitationsService {
     private prisma: PrismaService,
     private notifications: NotificationsService,
     private auth: AuthService,
+    private auditLog: AuditLogService,
   ) {}
 
   // §9.2: invite/remove team members is Admin+ — enforced at the controller
@@ -76,16 +78,29 @@ export class InvitationsService {
     });
   }
 
-  async revoke(id: string, organizationId: string) {
+  // Destructive: revokes a pending invite. Audit-logged per §20.13
+  // (PR 9, Security Hardening).
+  async revoke(id: string, organizationId: string, actorUserId: string) {
     const invite = await this.prisma.client.invitation.findFirst({ where: { id, organizationId } });
     if (!invite) throw new NotFoundException('Invitation not found');
     if (invite.status !== InvitationStatus.PENDING) {
       throw new BadRequestException(`Only pending invitations can be revoked (current status: ${invite.status})`);
     }
-    return this.prisma.client.invitation.update({
+    const updated = await this.prisma.client.invitation.update({
       where: { id },
       data: { status: InvitationStatus.REVOKED },
     });
+
+    await this.auditLog.record({
+      organizationId,
+      userId: actorUserId,
+      action: 'invitation.revoked',
+      resourceType: 'invitation',
+      resourceId: id,
+      metadata: { email: invite.email, role: invite.role },
+    });
+
+    return updated;
   }
 
   // Public — powers the /invite/[token] page's header before the person

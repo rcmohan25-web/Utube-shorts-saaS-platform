@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { UserRole } from '@shorts/db';
 import { Public } from '../common/decorators/public.decorator';
@@ -64,6 +65,14 @@ export class BillingController {
   // Requires `rawBody: true` passed to NestFactory.create() in main.ts so
   // req.rawBody is the exact bytes Stripe signed — re-serialized JSON
   // would fail signature verification even with correct content.
+  //
+  // PR 9 (Security Hardening, §19.1): dedicated 'webhook' throttle bucket
+  // (30/min, see app.module.ts) rather than the shared default/internal
+  // buckets. Legitimate Stripe webhook volume is low and predictable; this
+  // is defense in depth on top of signature verification, not the primary
+  // control — a request that fails the throttle never even reaches
+  // handleWebhook()'s constructEvent() check.
+  @Throttle({ webhook: { limit: 30, ttl: 60_000 } })
   @Public()
   @Post('webhook')
   @HttpCode(HttpStatus.OK)

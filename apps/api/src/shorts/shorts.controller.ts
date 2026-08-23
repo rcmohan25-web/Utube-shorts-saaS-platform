@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ShortStatus, UserRole } from '@shorts/db';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -14,6 +15,9 @@ export class ShortsController {
   constructor(private shorts: ShortsService) {}
 
   // render-worker -> API callback. Always creates the row — see ShortsService.
+  // PR 9 (§19.1): 'internal' throttle bucket, see SchedulesController for
+  // the rationale (bursty legitimate traffic, brute-force resistance).
+  @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
   @Post()
