@@ -118,7 +118,6 @@ export default function SettingsPage() {
               >
                 <div className="h-10 w-10 overflow-hidden rounded-full bg-black/40">
                   {c.thumbnailUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={c.thumbnailUrl} alt={c.name} className="h-full w-full object-cover" />
                   )}
                 </div>

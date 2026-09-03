@@ -138,7 +138,6 @@ export default function VideosPage() {
           >
             <div className="aspect-video bg-black/40">
               {v.thumbnailUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={v.thumbnailUrl} alt={v.title} className="h-full w-full object-cover" />
               )}
             </div>

@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { getSocket } from '@/lib/socket';
-import type { ShortPublishedEvent } from '@shorts/shared';
 
 type ScheduleItem = {
   id: string;
@@ -59,7 +58,6 @@ export default function SchedulerPage() {
     )
       .then(setSchedules)
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart.getTime()]);
 
   useEffect(() => {
@@ -68,7 +66,7 @@ export default function SchedulerPage() {
 
   useEffect(() => {
     const socket = getSocket();
-    function onPublished(_event: ShortPublishedEvent) {
+    function onPublished() {
       refresh();
     }
     socket.on('short:published', onPublished);
@@ -196,7 +194,6 @@ export default function SchedulerPage() {
             onClick={(e) => e.stopPropagation()}
           >
             {selected.short.thumbnailPresignedUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={selected.short.thumbnailPresignedUrl}
                 alt={selected.short.title}
