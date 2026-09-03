@@ -102,7 +102,6 @@ export default function VideoDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         {video.thumbnailUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={video.thumbnailUrl} alt={video.title} className="h-16 w-28 rounded-lg object-cover" />
         )}
         <div>

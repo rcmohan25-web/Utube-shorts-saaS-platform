@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { getSocket } from '@/lib/socket';
-import type { ShortReadyEvent, ShortPublishedEvent } from '@shorts/shared';
+import type { ShortPublishedEvent } from '@shorts/shared';
 
 type Short = {
   id: string;
@@ -57,7 +57,7 @@ export default function ShortsPage() {
 
   useEffect(() => {
     const socket = getSocket();
-    function onShortReady(_event: ShortReadyEvent) {
+    function onShortReady() {
       refresh();
     }
     function onShortPublished(event: ShortPublishedEvent) {
