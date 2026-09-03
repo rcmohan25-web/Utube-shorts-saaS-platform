@@ -6,6 +6,7 @@ const { ChannelsService } = require('../dist/channels/channels.service.js');
 const { ClipsService } = require('../dist/clips/clips.service.js');
 const { ShortsService } = require('../dist/shorts/shorts.service.js');
 const { AnalyticsService } = require('../dist/analytics/analytics.service.js');
+const { AuditLogService } = require('../dist/audit/audit-log.service.js');
 
 // PR 9 (Security Hardening, §18.2/§20.13/§19.1): "Integration tests MUST
 // assert: Org A user cannot access Org B resource via direct ID." Everything
@@ -114,4 +115,28 @@ test('AnalyticsService.shortSeries: Org B gets null, not Org A data, for a short
 
   const result = await service.shortSeries('short-1', 'org-B', new Date(), new Date());
   assert.equal(result, null);
+});
+
+// PR 11 (§9.4 follow-up: audit log admin UI). The audit log itself must be
+// tenant-scoped — an org's compliance trail is exactly the kind of data
+// that must never leak cross-tenant. This is the strongest form of the
+// guarantee: no filters applied at all, so a missing/optional filter can
+// never accidentally widen the result set past the caller's own org.
+test('AuditLogService.query: Org B never sees Org A rows, even with no filters', async () => {
+  const allRows = [
+    { id: 'log-a', organizationId: 'org-A', createdAt: new Date() },
+    { id: 'log-b', organizationId: 'org-B', createdAt: new Date() },
+  ];
+  const service = new AuditLogService({
+    client: {
+      auditLog: {
+        findMany: async ({ where }) => allRows.filter((r) => r.organizationId === where.organizationId),
+      },
+    },
+  });
+
+  const page = await service.query('org-B', {});
+
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].id, 'log-b');
 });

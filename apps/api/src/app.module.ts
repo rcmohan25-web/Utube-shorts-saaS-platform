@@ -19,17 +19,12 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { BillingModule } from './billing/billing.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrganizationsModule } from './organizations/organizations.module';
-// PR 8 (§9.2/§11.6 Team Management): invite flow + public accept routes.
-// Registered directly here (not just pulled in transitively via
-// OrganizationsModule) so InvitationsController's public /invitations/:token/*
-// routes are always mounted, matching the pattern NotificationsModule
-// already uses for the same reason.
 import { InvitationsModule } from './invitations/invitations.module';
-// PR 9 (§9.4/§20.13 Security Hardening): AuditLogService is @Global(), so
-// this import is what makes it available everywhere without every feature
-// module having to import AuditLogModule individually — same shape as
-// CryptoModule and StorageModule below.
 import { AuditLogModule } from './audit/audit-log.module';
+// PR 10 (§15.2 Agency White-Label)
+import { AgencyModule } from './agency/agency.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { PublicApiModule } from './public-api/public-api.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -45,30 +40,17 @@ import { RolesGuard } from './common/guards/roles.guard';
             : { target: 'pino-pretty', options: { singleLine: true } },
       },
     }),
-    // PR 9 (§19.1 Security Hardening): three named buckets instead of one
-    // flat limit.
-    //   - 'default' (100/min): unauthenticated + regular user-facing routes,
-    //     same limit as before this PR.
-    //   - 'internal' (300/min): worker → API callbacks (video/clip/short
-    //     status, schedule outcomes). Generous because legitimate traffic
-    //     bursts when many parallel pipeline jobs finish at once, but it
-    //     still caps a runaway retry storm or a brute-force attempt against
-    //     API_INTERNAL_SECRET. Applied per-route via @Throttle({ internal: ... }).
-    //   - 'webhook' (30/min): the Stripe webhook specifically. Legitimate
-    //     volume is low and predictable; this is defense in depth on top of
-    //     signature verification (§9.4), not the primary control.
-    // Routes that don't opt into a named bucket via @Throttle(...) fall
-    // back to 'default' automatically (NestJS throttler behavior).
+    // PR 10 adds 'external' — a fourth named bucket for the public API
+    // (§15.2), distinct from 'internal' (our own trusted workers). Per-IP
+    // like the other buckets; per-API-key throttling is a follow-up.
     ThrottlerModule.forRoot([
       { name: 'default', ttl: 60_000, limit: 100 },
       { name: 'internal', ttl: 60_000, limit: 300 },
       { name: 'webhook', ttl: 60_000, limit: 30 },
+      { name: 'external', ttl: 60_000, limit: 120 },
     ]),
     // CRITICAL: ScheduleModule.forRoot() must be here for @Cron decorators
-    // to fire. Without this, YoutubeTokenService.refreshNearlyExpiredTokens(),
-    // SchedulesService.checkStuckSchedules(), AnalyticsService.dailySyncAllPublished(),
-    // and NotificationsService.weeklyDigest() silently never run — no
-    // error, no warning, just nothing happening at the scheduled time.
+    // to fire (see comments elsewhere in this file's history for details).
     ScheduleModule.forRoot(),
     PrismaModule,
     CryptoModule,
@@ -86,6 +68,9 @@ import { RolesGuard } from './common/guards/roles.guard';
     NotificationsModule,
     OrganizationsModule,
     InvitationsModule,
+    AgencyModule,
+    ApiKeysModule,
+    PublicApiModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

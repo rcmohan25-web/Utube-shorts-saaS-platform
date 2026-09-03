@@ -1,6 +1,11 @@
 // packages/db/prisma/schema.prisma
 // Shared-schema multi-tenancy: every tenant-owned table carries organizationId.
 // ADR-001: shared schema chosen over per-tenant DBs for operational simplicity at <1000 tenants.
+//
+// Combined state through PR 11 (Audit Log Admin UI). PR 10 (Agency
+// White-Label) added Organization.parentOrganizationId + the ApiKey model.
+// PR 11 added no schema changes (pure query layer on the existing
+// AuditLog table).
 
 generator client {
   provider = "prisma-client-js"
@@ -83,10 +88,6 @@ enum UserStatus {
   DEACTIVATED
 }
 
-// PR 7 (§15 Notifications) — one row per delivered/queued notification,
-// backs the in-app bell + read/unread state. Email/Slack delivery itself
-// is NOT persisted here (no delivery log table yet) — this table is the
-// in-app channel's source of truth only, per §15.1's channel matrix.
 enum NotificationType {
   SHORTS_READY
   SHORT_PUBLISHED
@@ -96,6 +97,13 @@ enum NotificationType {
   TEAM_INVITE
   PAYMENT_FAILED
   WEEKLY_DIGEST
+}
+
+// PR 10 (§15.2 Agency White-Label) — org-scoped API keys for external
+// integrations (Agency+ only, gated by FLAGS.API_ACCESS).
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
 }
 
 model Organization {
@@ -109,8 +117,18 @@ model Organization {
   brandColor          String?
   webhookUrl          String?
   onboardingStep      Int      @default(0)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  // PR 10 (§15.2): "Client sub-organizations: Agency creates and manages
+  // child orgs per client." Self-relation — null for a standalone org or
+  // an agency's own top-level org; set for a client workspace created
+  // under an agency. Deliberately NOT used for billing inheritance in v1
+  // — each org still has its own Plan/quota/Stripe customer (see README
+  // "Known follow-ups").
+  parentOrganizationId String?
+  createdAt             DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  parentOrganization Organization?  @relation("OrgHierarchy", fields: [parentOrganizationId], references: [id])
+  childOrganizations Organization[] @relation("OrgHierarchy")
 
   users         User[]
   channels      Channel[]
@@ -123,23 +141,26 @@ model Organization {
   analytics     AnalyticsDaily[]
   auditLogs     AuditLog[]
   notifications Notification[]
+  apiKeys       ApiKey[]
+
+  @@index([parentOrganizationId])
 }
 
 model User {
-  id             String    @id @default(cuid())
+  id             String     @id @default(cuid())
   organizationId String
-  email          String    @unique
+  email          String     @unique
   passwordHash   String
   name           String
-  role           UserRole  @default(VIEWER)
-  emailVerified  Boolean   @default(false)
+  role           UserRole   @default(VIEWER)
+  emailVerified  Boolean    @default(false)
   status         UserStatus @default(ACTIVE)
   ytAccessToken  String? // AES-256-GCM encrypted
   ytRefreshToken String? // AES-256-GCM encrypted
   ytTokenExpiry  DateTime?
   lastLoginAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   organization  Organization   @relation(fields: [organizationId], references: [id])
   channels      Channel[]
@@ -363,11 +384,10 @@ model StripeWebhookEvent {
   processedAt   DateTime @default(now())
 }
 
-// PR 7 — see NotificationType enum above for the delivered types.
 model Notification {
   id             String           @id @default(cuid())
   organizationId String
-  userId         String? // null = org-wide (quota, digest); set = targeted (future: per-user prefs)
+  userId         String?
   type           NotificationType
   title          String
   body           String
@@ -380,4 +400,25 @@ model Notification {
 
   @@index([organizationId, readAt])
   @@index([organizationId, createdAt])
+}
+
+// PR 10 (§15.2): "API access (Agency+): REST API with org-scoped API keys
+// for external integrations." Only keyHash + a display keyPrefix are ever
+// persisted — the raw key is returned once at creation time and never
+// stored, same one-time-reveal discipline as every other secret in §9.
+model ApiKey {
+  id              String       @id @default(cuid())
+  organizationId  String
+  name            String
+  keyPrefix       String
+  keyHash         String       @unique
+  status          ApiKeyStatus @default(ACTIVE)
+  createdByUserId String
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
 }
