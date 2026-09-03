@@ -10,8 +10,11 @@ const NAV = [
   { href: '/shorts', label: 'Shorts' },
   { href: '/scheduler', label: 'Scheduler' },
   { href: '/analytics', label: 'Analytics' },
+  { href: '/agency', label: 'Agency' },
   { href: '/settings', label: 'Settings' },
   { href: '/settings/users', label: 'Team' },
+  { href: '/settings/api-keys', label: 'API keys' },
+  { href: '/settings/audit-log', label: 'Audit log' },
   { href: '/billing', label: 'Billing' },
 ];
 
@@ -28,7 +31,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <nav className="space-y-1">
           {NAV.map((item) => {
             // Exact match for /settings so it doesn't also light up for
-            // /settings/users — both routes now live under the same prefix.
+            // /settings/users, /settings/api-keys, /settings/audit-log —
+            // all four routes now live under the same prefix.
             const active =
               item.href === '/settings' ? pathname === '/settings' : pathname?.startsWith(item.href);
             return (

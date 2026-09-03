@@ -9,6 +9,7 @@ import { VideoGateway } from '../websockets/video.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ImportVideoDto } from './dto/import-video.dto';
 import { VideoStatusCallbackDto } from './dto/video-status-callback.dto';
+import { BulkImportVideosDto } from './dto/bulk-import.dto';
 import { transitionVideo } from './video-status.machine';
 
 // Coarse progress mapping for the WebSocket payload (§8.3) — not meant to be
@@ -58,11 +59,7 @@ export class VideosService {
     const video = existingVideo
       ? await this.prisma.client.video.update({
           where: { id: existingVideo.id },
-          data: {
-            errorMessage: null,
-            updatedAt: new Date(),
-            status: VideoStatus.PENDING,
-          },
+          data: { errorMessage: null, updatedAt: new Date(), status: VideoStatus.PENDING },
         })
       : await this.prisma.client.video.create({
           data: {
@@ -85,12 +82,7 @@ export class VideosService {
     );
 
     await this.prisma.client.usageEvent.create({
-      data: {
-        organizationId,
-        userId,
-        eventType: EventType.VIDEO_IMPORTED,
-        resourceId: video.id,
-      },
+      data: { organizationId, userId, eventType: EventType.VIDEO_IMPORTED, resourceId: video.id },
     });
 
     this.videoGateway.emitVideoStatus(organizationId, {
@@ -100,6 +92,31 @@ export class VideosService {
     });
 
     return video;
+  }
+
+  // PR 10 (§15.2) — bulk CSV import. Same idempotent upsert-per-URL path
+  // as importVideo(), just looped. Feature-gated (BULK_IMPORT, excludes
+  // Starter) at the controller. One bad URL never aborts the batch — each
+  // row succeeds or fails independently, mirroring the "one Short's
+  // failure never blocks siblings" pattern in analytics-sync.processor.ts.
+  async bulkImport(dto: BulkImportVideosDto, organizationId: string, userId: string) {
+    const results: Array<{ youtubeUrl: string; status: 'imported' | 'error'; videoId?: string; error?: string }> = [];
+
+    for (const youtubeUrl of dto.youtubeUrls) {
+      try {
+        const video = await this.importVideo({ youtubeUrl, channelId: dto.channelId }, organizationId, userId);
+        results.push({ youtubeUrl, status: 'imported', videoId: video.id });
+      } catch (err) {
+        results.push({ youtubeUrl, status: 'error', error: err instanceof Error ? err.message : 'Import failed' });
+      }
+    }
+
+    return {
+      total: dto.youtubeUrls.length,
+      imported: results.filter((r) => r.status === 'imported').length,
+      failed: results.filter((r) => r.status === 'error').length,
+      results,
+    };
   }
 
   async findAll(organizationId: string, status?: VideoStatus) {
@@ -131,17 +148,13 @@ export class VideosService {
       processingEnded: dto.status === 'READY' || dto.status === 'FAILED' ? new Date() : undefined,
     });
 
-    // §8.3 — every pipeline stage change pushed live, org-scoped. This is
-    // what lets the frontend drop its 5s polling loop.
+    // §8.3 — every pipeline stage change pushed live, org-scoped.
     this.videoGateway.emitVideoStatus(dto.organizationId, {
       videoId: id,
       status: video.status,
       progress: STAGE_PROGRESS[video.status],
     });
 
-    // §15.1 "Pipeline failure" — video stuck/failed after all retries
-    // exhausted (also caught independently by the §7.3 stuck-schedule cron
-    // pattern for the publish side; this covers the import/transcode side).
     if (dto.status === 'FAILED') {
       await this.notifications.notify('PIPELINE_FAILURE', dto.organizationId, {
         resourceType: 'video',
@@ -159,8 +172,7 @@ export class VideosService {
       );
     }
 
-    // Chain the pipeline: READY (transcript done) -> kick off clip detection
-    // (scene detection + GPT-4o scoring, §6.1 stages 5-6).
+    // Chain the pipeline: READY (transcript done) -> kick off clip detection.
     if (dto.status === 'READY') {
       await this.clipDetectionQueue.add(
         'detect-clips',

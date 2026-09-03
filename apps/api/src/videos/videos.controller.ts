@@ -17,12 +17,15 @@ import { Throttle } from '@nestjs/throttler';
 import { UserRole, VideoStatus } from '@shorts/db';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { Feature } from '../common/decorators/feature.decorator';
+import { FeatureGuard } from '../common/guards/feature.guard';
 import { TenantInterceptor } from '../common/interceptors/tenant.interceptor';
 import { InternalSecretGuard } from '../common/guards/internal-secret.guard';
 import type { AuthenticatedRequest } from '../common/decorators/current-user.decorator';
 import { VideosService } from './videos.service';
 import { ImportVideoDto } from './dto/import-video.dto';
 import { VideoStatusCallbackDto } from './dto/video-status-callback.dto';
+import { BulkImportVideosDto } from './dto/bulk-import.dto';
 import { ClipsService } from '../clips/clips.service';
 import { CreateClipsDto } from '../clips/dto/create-clips.dto';
 
@@ -42,6 +45,17 @@ export class VideosController {
     return this.videos.importVideo(dto, req.organizationId, req.user.sub);
   }
 
+  // PR 10 (§15.2) — plan-gated (excludes Starter) bulk CSV import for
+  // agency production workflows.
+  @Post('bulk-import')
+  @UseGuards(FeatureGuard)
+  @Feature('BULK_IMPORT')
+  @Roles(UserRole.EDITOR, UserRole.ADMIN, UserRole.OWNER)
+  @HttpCode(HttpStatus.CREATED)
+  bulkImport(@Body() dto: BulkImportVideosDto, @Req() req: AuthenticatedRequest) {
+    return this.videos.bulkImport(dto, req.organizationId, req.user.sub);
+  }
+
   @Get()
   findAll(@Req() req: AuthenticatedRequest, @Query('status') status?: VideoStatus) {
     return this.videos.findAll(req.organizationId, status);
@@ -53,15 +67,7 @@ export class VideosController {
   }
 
   // Worker -> API callback. Public to the JWT guard, but locked down by
-  // InternalSecretGuard.
-  //
-  // PR 9 (Security Hardening, §19.1): explicit 'internal' throttle bucket
-  // (300/min, see app.module.ts) instead of the default 100/min user-facing
-  // limit. Every download/transcription/clip-detection stage PATCHes this
-  // route, so a normal burst of parallel video imports can legitimately
-  // exceed the default limit; the internal bucket is deliberately generous
-  // while still capping a runaway retry storm or a brute-force attempt
-  // against API_INTERNAL_SECRET.
+  // InternalSecretGuard. §19.1: 'internal' throttle bucket (300/min).
   @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)
@@ -70,9 +76,7 @@ export class VideosController {
     return this.videos.applyStatusCallback(id, dto);
   }
 
-  // clip-worker -> API callback after GPT-4o scoring (§6.2). Lives here
-  // (rather than on ClipsController) since the URL is a sub-resource of
-  // /videos; ClipsService itself stays in the clips module.
+  // clip-worker -> API callback after GPT-4o scoring (§6.2).
   @Throttle({ internal: { limit: 300, ttl: 60_000 } })
   @Public()
   @UseGuards(InternalSecretGuard)

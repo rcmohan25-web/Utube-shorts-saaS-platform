@@ -30,7 +30,9 @@ export function NotificationBell() {
       ]);
     }
     socket.on('notification:new', onNew);
-    return () => socket.off('notification:new', onNew);
+    return () => {
+      socket.off('notification:new', onNew);
+    };
   }, []);
 
   async function markRead(id: string) {
