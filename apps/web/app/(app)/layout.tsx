@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { NotificationBell } from '@/components/notification-bell';
+import { PoweredByFooter } from '@/components/powered-by-footer';
+import { useBranding } from '@/lib/branding';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -12,6 +14,7 @@ const NAV = [
   { href: '/analytics', label: 'Analytics' },
   { href: '/agency', label: 'Agency' },
   { href: '/settings', label: 'Settings' },
+  { href: '/settings/branding', label: 'Branding' },
   { href: '/settings/users', label: 'Team' },
   { href: '/settings/api-keys', label: 'API keys' },
   { href: '/settings/audit-log', label: 'Audit log' },
@@ -20,19 +23,33 @@ const NAV = [
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // PR 12 (§15.2): the sidebar now shows this org's own logo/name once
+  // set, instead of the hardcoded "Shorts Pilot" wordmark — the first and
+  // most-seen surface in the whole app for the branding pass to land on.
+  const branding = useBranding();
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-56 border-r border-white/10 p-4">
+      <aside className="flex w-56 flex-col border-r border-white/10 p-4">
         <div className="mb-6 flex items-center justify-between px-2">
-          <span className="text-lg font-semibold">Shorts Pilot</span>
+          {branding.logoUrl ? (
+            <img
+              src={branding.logoUrl}
+              alt={branding.organizationName}
+              className="h-7 max-w-[140px] object-contain"
+            />
+          ) : (
+            <span className="text-lg font-semibold">
+              {branding.whiteLabelEnabled ? branding.organizationName : 'Shorts Pilot'}
+            </span>
+          )}
           <NotificationBell />
         </div>
-        <nav className="space-y-1">
+        <nav className="flex-1 space-y-1">
           {NAV.map((item) => {
             // Exact match for /settings so it doesn't also light up for
-            // /settings/users, /settings/api-keys, /settings/audit-log —
-            // all four routes now live under the same prefix.
+            // /settings/branding, /settings/users, /settings/api-keys,
+            // /settings/audit-log — all under the same prefix.
             const active =
               item.href === '/settings' ? pathname === '/settings' : pathname?.startsWith(item.href);
             return (
@@ -48,6 +65,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
+        {/* PR 12: hidden automatically once this org's plan unlocks white-label. */}
+        <PoweredByFooter branding={branding} />
       </aside>
       <main className="flex-1 p-8">{children}</main>
     </div>

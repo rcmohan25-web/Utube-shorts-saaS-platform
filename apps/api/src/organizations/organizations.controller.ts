@@ -7,6 +7,7 @@ import { OrganizationsService } from './organizations.service';
 import { UsersService } from './users.service';
 import { InvitationsService } from '../invitations/invitations.service';
 import { UpdateOrganizationBrandingDto } from './dto/update-organization-branding.dto';
+import { RequestLogoUploadDto } from './dto/request-logo-upload.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { InviteUserDto } from '../invitations/dto/invite-user.dto';
 
@@ -22,8 +23,25 @@ export class OrganizationsController {
   @Put('branding')
   @Roles(UserRole.ADMIN, UserRole.OWNER)
   updateBranding(@Body() dto: UpdateOrganizationBrandingDto, @Req() req: AuthenticatedRequest) {
-    // PR 9: actor id now threaded through for the AuditLog entry.
+    // PR 9: actor id threaded through for the AuditLog entry.
+    // PR 12: dto now also carries brandColor / logoS3Key.
     return this.organizations.updateBranding(req.organizationId, dto, req.user.sub);
+  }
+
+  // PR 12 (§15.2) — step 1 of the logo upload flow: mint a presigned PUT
+  // URL. Admin+ only, same tier as "Manage branding" generally.
+  @Post('branding/logo-upload-url')
+  @Roles(UserRole.ADMIN, UserRole.OWNER)
+  requestLogoUploadUrl(@Body() dto: RequestLogoUploadDto, @Req() req: AuthenticatedRequest) {
+    return this.organizations.requestLogoUploadUrl(req.organizationId, dto.contentType);
+  }
+
+  // PR 12 — deliberately NOT @Roles()-gated: every authenticated member,
+  // regardless of role, needs this to theme the app shell (logo, brand
+  // color) and to know whether the "Powered by" footer should render.
+  @Get('branding')
+  getBranding(@Req() req: AuthenticatedRequest) {
+    return this.organizations.getPublicBranding(req.organizationId);
   }
 
   // §11.6 /settings/users — team roster

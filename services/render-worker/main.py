@@ -7,6 +7,12 @@ with the result.
 This is an HTTP service, not a BullMQ consumer (ADR-002): the NestJS-side
 RenderProcessor POSTs the job here; we do the work and POST the final Short
 record back over HTTP — render-worker never touches Postgres directly.
+
+PR 12 (§15.2 white-label branding pass): job.brandColor (already sent by
+RenderProcessor since the original org-scoped render payload) is now
+actually consumed — it drives the caption Highlight color via
+caption_generator.write_ass_file(), on top of the pre-existing logo overlay
+below. Every branded Short now visually matches the org's app/email colors.
 """
 import os
 import json
@@ -89,12 +95,13 @@ def run_pipeline(job: RenderJob):
         # Stage 10: word-pop ASS captions, re-zeroed to the clip's own
         # timeline (§6.4) — transcript timestamps are absolute to the
         # source video, so they need shifting back by startSeconds.
+        # PR 12: brand_color threads the org's color into the Highlight style.
         ass_path = os.path.join(work_dir, "short.ass")
         words_in_clip = [
             w for w in transcript.get("words", [])
             if w["start"] >= job.startSeconds and w["end"] <= job.endSeconds
         ]
-        write_ass_file(words_in_clip, job.startSeconds, ass_path)
+        write_ass_file(words_in_clip, job.startSeconds, ass_path, brand_color=job.brandColor)
 
         # Stage 11+13: burn captions + final encode (H.264 CRF23 + AAC) in one pass
         captioned_path = os.path.join(work_dir, "captioned.mp4")
@@ -106,9 +113,9 @@ def run_pipeline(job: RenderJob):
         ])
 
         # Stage 12: branding overlay — optional, only if the org has a logo
-        # configured. (Spec calls for MoviePy here; skipped in favor of a
-        # single FFmpeg overlay filter since there's no Settings UI yet to
-        # actually upload a logo — see PR-03-NOTES.md.)
+        # configured (now settable from /settings/branding as of PR 12,
+        # rather than only via direct DB access — see PR-03-NOTES.md for
+        # the original FFmpeg-overlay-vs-MoviePy rationale, still valid).
         final_path = captioned_path
         if job.brandLogoS3Key:
             logo_path = os.path.join(work_dir, "logo.png")

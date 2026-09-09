@@ -4,11 +4,12 @@ import { Cron } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
 import { subDays } from 'date-fns';
 import { UserRole } from '@shorts/db';
+import { FLAGS } from '@shorts/shared';
 import type { NotificationType } from '@shorts/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { VideoGateway } from '../websockets/video.gateway';
 import { QUEUE_NAMES } from '../queues/queue.constants';
-import { EmailService } from './email.service';
+import { EmailService, type EmailBranding } from './email.service';
 import { SlackService } from './slack.service';
 
 // §15.1 channel matrix. TEAM_INVITE is handled by a dedicated method
@@ -76,7 +77,8 @@ export class NotificationsService {
 
     if (channels.email) {
       const recipients = await this.recipientsFor(organizationId, type);
-      await Promise.all(recipients.map((r) => this.email.send(r.email, title, body, actionUrl)));
+      const branding = await this.brandingFor(organizationId);
+      await Promise.all(recipients.map((r) => this.email.send(r.email, title, body, actionUrl, branding)));
     }
 
     if (channels.slack) {
@@ -87,7 +89,8 @@ export class NotificationsService {
 
   // §15.1 "Team invite" — invitee has no org yet, so this bypasses the
   // usual in-app/Slack path entirely and just emails the invite link.
-  // Used by PR 8's InvitesService once that lands; safe to call today.
+  // PR 12: still branded — the invitee's very first touchpoint with the
+  // workspace should already look like that workspace, not the platform.
   async notifyTeamInvite(email: string, organizationName: string, inviteUrl: string): Promise<void> {
     await this.email.send(
       email,
@@ -131,6 +134,26 @@ export class NotificationsService {
         this.logger.error({ msg: 'notifications.weekly_digest_failed', organizationId: org.id, reason: (err as Error).message });
       }
     }
+  }
+
+  // PR 12 (§15.2): resolves this org's logo/color/plan into the shape
+  // EmailService needs. Deliberately does NOT presign the logo S3 key here
+  // — a presigned GET URL expires in 60 minutes, but emails sit unread in
+  // inboxes for days, and a broken <img> in a week-old email is worse than
+  // no logo at all. Falls back to the org name as text until white-label
+  // custom domains ship a stable public asset URL (see README "Known
+  // follow-ups"); the app shell and Short overlays, which resolve their
+  // own presigned URL at render/request time, aren't affected by this.
+  private async brandingFor(organizationId: string): Promise<EmailBranding | undefined> {
+    const org = await this.prisma.client.organization.findUnique({ where: { id: organizationId } });
+    if (!org) return undefined;
+
+    return {
+      organizationName: org.name,
+      logoUrl: null,
+      brandColor: org.brandColor,
+      showPoweredBy: !FLAGS.WHITE_LABEL(org.plan),
+    };
   }
 
   private async recipientsFor(organizationId: string, type: NotificationType) {
