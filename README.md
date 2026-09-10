@@ -15,7 +15,8 @@ Status below reflects three combined milestones shipped back to back:
   since the very first migration but nothing ever read them. This PR
   wires them into the app shell, every outbound email, and every newly
   rendered Short's caption/overlay — and hides "Powered by Shorts Pilot"
-  everywhere once an org is Agency+.
+  everywhere once an org is Agency+. **This is now packaged as a
+  complete, drop-in file set — see `SETUP_INSTRUCTIONS_PR12.md`.**
 
 > Paste URL → DB row → job dispatched → video downloaded & audio
 > extracted → transcribed with word timestamps → GPT-4o scores candidate
@@ -55,6 +56,7 @@ Status below reflects three combined milestones shipped back to back:
 | `apps/api` — `OrganizationsService`: `updateBranding()` extended (brandColor/logoS3Key), `requestLogoUploadUrl()`, `getPublicBranding()` | ✅ **PR 12** |
 | `apps/api` — `GET/PUT /organizations/branding`, `POST /organizations/branding/logo-upload-url` | ✅ **PR 12** |
 | `apps/api` — `EmailService` renders every outbound email with the sending org's logo/color and conditionally drops the "Powered by" footer | ✅ **PR 12** |
+| `apps/api` — `NotificationsService.brandingFor()` resolves org branding once per `send()` call | ✅ **PR 12** |
 | `services/render-worker` — `caption_generator.py` burns the org's `brandColor` into the ASS Highlight style (word-pop captions) | ✅ **PR 12** |
 | `packages/shared/src/branding.ts` — `OrganizationBranding` type shared by API and web | ✅ **PR 12** |
 | `apps/web` — `useBranding()` hook, `<PoweredByFooter/>`, `/settings/branding` (logo upload + color picker) | ✅ **PR 12** |
@@ -93,7 +95,11 @@ pnpm dev
 ```
 
 For the exact copy/apply steps for PR 12 specifically (as opposed to a
-fresh clone), see **`SETUP_INSTRUCTIONS_PR12.md`** in this package.
+fresh clone), see **`SETUP_INSTRUCTIONS_PR12.md`** in this package — it
+now ships as a complete, drop-in file set (every file listed is a full
+replacement, not a diff/patch) under a mirrored directory tree
+(`apps/api/...`, `apps/web/...`, `packages/shared/...`,
+`services/render-worker/...`).
 
 ## Trying out PR 12 (branding)
 
@@ -254,6 +260,35 @@ without a relogin.)
   upload-URL scoping, plan-gated `whiteLabelEnabled`);
   `services/render-worker/test_caption_generator.py` (hex→ASS color
   conversion, including malformed-input fallback).
+
+### Packaging
+
+PR 12 is delivered as a complete, drop-in file set — **every file listed
+above is a full replacement of its target, never a diff or patch** — laid
+out in a directory tree that mirrors the monorepo exactly:
+
+```
+apps/api/src/storage/storage.service.ts
+apps/api/src/organizations/organizations.service.ts
+apps/api/src/organizations/organizations.controller.ts
+apps/api/src/organizations/organizations.module.ts
+apps/api/src/organizations/dto/update-organization-branding.dto.ts
+apps/api/src/organizations/dto/request-logo-upload.dto.ts
+apps/api/src/notifications/email.service.ts
+apps/api/src/notifications/notifications.service.ts
+apps/api/test/organizations-branding.test.js
+packages/shared/src/branding.ts
+packages/shared/src/index.ts
+services/render-worker/caption_generator.py
+services/render-worker/main.py
+services/render-worker/test_caption_generator.py
+apps/web/lib/branding.ts
+apps/web/components/powered-by-footer.tsx
+apps/web/app/(app)/settings/branding/page.tsx
+apps/web/app/(app)/layout.tsx
+```
+
+See `SETUP_INSTRUCTIONS_PR12.md` for the exact copy/apply steps.
 
 ### Deliberately deferred
 
