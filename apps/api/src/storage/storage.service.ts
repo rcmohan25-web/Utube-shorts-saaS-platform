@@ -28,7 +28,7 @@ export class StorageService {
   }
 
   // PR 12 (§15.2 white-label branding pass) — direct-to-storage upload for
-  // org logos. The client PUTs the file straight to S3/R2 with this URL;
+  // org logos. The client PUTs the file straight to S3/R2 with this URL,
   // our server never buffers the bytes, same shape as every other
   // presigned-URL flow in this codebase (§9.4). Short expiry (15 min
   // default) since this is only used for the immediate upload, not a
