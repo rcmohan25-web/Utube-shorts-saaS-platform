@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
-import { ApiKeyStatus } from '@shorts/db';
+import { ApiKeyScope, ApiKeyStatus } from '@shorts/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit/audit-log.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
@@ -23,10 +23,15 @@ export class ApiKeysService {
   // persisted, same one-time-reveal discipline as every other secret
   // issuance flow in this codebase (§9.1's OAuth tokens are never
   // re-displayed either).
+  //
+  // PR 14 (§15.2 follow-up): dto.scope defaults to READ_WRITE when
+  // omitted, matching the schema-level default and preserving pre-PR-14
+  // behavior for callers that haven't been updated to request a scope.
   async create(dto: CreateApiKeyDto, organizationId: string, actorUserId: string) {
     const secret = randomBytes(24).toString('hex'); // 48 hex chars
     const rawKey = `${KEY_PREFIX}${secret}`;
     const keyPrefix = rawKey.slice(0, 16); // enough to recognize in a UI list, not enough to brute-force
+    const scope = dto.scope ?? ApiKeyScope.READ_WRITE;
 
     const created = await this.prisma.client.apiKey.create({
       data: {
@@ -34,6 +39,7 @@ export class ApiKeysService {
         name: dto.name,
         keyPrefix,
         keyHash: hashKey(rawKey),
+        scope,
         createdByUserId: actorUserId,
       },
     });
@@ -44,17 +50,17 @@ export class ApiKeysService {
       action: 'apikey.created',
       resourceType: 'apiKey',
       resourceId: created.id,
-      metadata: { name: dto.name, keyPrefix },
+      metadata: { name: dto.name, keyPrefix, scope },
     });
 
-    return { id: created.id, name: created.name, keyPrefix, rawKey, createdAt: created.createdAt };
+    return { id: created.id, name: created.name, keyPrefix, scope, rawKey, createdAt: created.createdAt };
   }
 
   async list(organizationId: string) {
     return this.prisma.client.apiKey.findMany({
       where: { organizationId },
       select: {
-        id: true, name: true, keyPrefix: true, status: true,
+        id: true, name: true, keyPrefix: true, status: true, scope: true,
         lastUsedAt: true, revokedAt: true, createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -87,6 +93,8 @@ export class ApiKeysService {
 
   // Used by ApiKeyGuard on the public API. Best-effort lastUsedAt write —
   // never lets a logging failure block the caller's actual request.
+  // Returns the full record (including scope, PR 14) so ApiKeyGuard can
+  // attach it to the request for ApiKeyScopeGuard to read downstream.
   async resolve(rawKey: string) {
     const record = await this.prisma.client.apiKey.findUnique({ where: { keyHash: hashKey(rawKey) } });
     if (!record || record.status === ApiKeyStatus.REVOKED) return null;

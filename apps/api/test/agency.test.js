@@ -10,7 +10,7 @@ function makePrisma(overrides = {}) {
   return {
     client: {
       organization: {
-        findUnique: async () => ({ id: 'org-parent', slug: 'acme-agency' }),
+        findUnique: async ({ where }) => (where.id ? { id: 'org-parent', slug: 'acme-agency' } : null),
         create: async (args) => ({ id: 'org-child-1', ...args.data }),
         findMany: async () => [],
         ...overrides.organization,

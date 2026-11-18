@@ -2,10 +2,11 @@
 // Shared-schema multi-tenancy: every tenant-owned table carries organizationId.
 // ADR-001: shared schema chosen over per-tenant DBs for operational simplicity at <1000 tenants.
 //
-// Combined state through PR 11 (Audit Log Admin UI). PR 10 (Agency
-// White-Label) added Organization.parentOrganizationId + the ApiKey model.
-// PR 11 added no schema changes (pure query layer on the existing
-// AuditLog table).
+// Combined state through PR 14. PR 10 (Agency White-Label) added
+// Organization.parentOrganizationId + the ApiKey model. PR 11 added no
+// schema changes. PR 12 (Branding) added no schema changes (logoS3Key /
+// brandColor existed since §5.1). PR 13 (Analytics batching) added no
+// schema changes. PR 14 (per-API-key scoping) adds ApiKeyScope + ApiKey.scope.
 
 generator client {
   provider = "prisma-client-js"
@@ -104,6 +105,17 @@ enum NotificationType {
 enum ApiKeyStatus {
   ACTIVE
   REVOKED
+}
+
+// PR 14 (§15.2 follow-up: per-API-key scoping). Deliberately a coarse
+// two-tier scope rather than per-resource permissions (e.g. "videos:read",
+// "shorts:write") — the public API surface today is a single POST/GET
+// pair (§15.2's original scope), so a finer-grained model would be
+// speculative. Extending this to real per-resource scopes is a follow-up
+// once the public API surface actually grows past that.
+enum ApiKeyScope {
+  READ_ONLY
+  READ_WRITE
 }
 
 model Organization {
@@ -426,6 +438,12 @@ model Notification {
 // for external integrations." Only keyHash + a display keyPrefix are ever
 // persisted — the raw key is returned once at creation time and never
 // stored, same one-time-reveal discipline as every other secret in §9.
+//
+// PR 14: `scope` gates what an authenticated key is allowed to do on the
+// public API (see ApiKeyScopeGuard). Defaults to READ_WRITE so a key
+// created before this column existed — or created via a caller that
+// doesn't pass scope explicitly — keeps its pre-PR-14 behavior of being
+// able to do everything the API_ACCESS-gated routes expose.
 model ApiKey {
   id              String       @id @default(cuid())
   organizationId  String
@@ -433,6 +451,7 @@ model ApiKey {
   keyPrefix       String
   keyHash         String       @unique
   status          ApiKeyStatus @default(ACTIVE)
+  scope           ApiKeyScope  @default(READ_WRITE)
   createdByUserId String
   lastUsedAt      DateTime?
   revokedAt       DateTime?

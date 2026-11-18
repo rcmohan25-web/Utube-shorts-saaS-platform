@@ -9,6 +9,21 @@ import { QUEUE_NAMES } from '../queues/queue.constants';
 
 const ANALYTICS_RETENTION_DAYS = 90;
 
+// PR 13 (§17 follow-up): cap on video IDs per batch job / per YouTube
+// Analytics API call. Mirrors YoutubeAnalyticsService's own conservative
+// cap (see that file's MAX_BATCH_VIDEO_IDS comment) — kept as a separate
+// constant here rather than importing it, since this is a queueing
+// decision (how big a job to build) and that one is an HTTP-call decision
+// (how many filter values to send in one request); the two happen to
+// agree today but aren't the same concern and shouldn't be coupled.
+const ANALYTICS_BATCH_SIZE = 40;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
@@ -21,6 +36,12 @@ export class AnalyticsService {
   // Called by SchedulesService.markPublished() — §17.1: "24h after publish:
   // analytics-sync job queued for first day." jobId makes this idempotent:
   // a retried/duplicated markPublished() call is a safe no-op add().
+  //
+  // Deliberately stays per-Short (not batched) — see PR 13's README
+  // section: publish events are scattered in time, so there's nothing
+  // natural to batch them against, and this call volume was never the
+  // cost driver (the daily cron re-syncing every published Short every
+  // day was).
   async scheduleFirstSync(shortId: string, organizationId: string): Promise<void> {
     await this.analyticsQueue.add(
       'sync',
@@ -35,14 +56,13 @@ export class AnalyticsService {
   }
 
   // §17.1: "Daily cron (3am UTC): sync all published Shorts for last 90 days."
-  // Fans out one job per Short via the queue rather than syncing inline, so
-  // a slow or rate-limited YouTube API call can't stall the cron tick itself
-  // — same shape as SchedulesService.checkStuckSchedules().
   //
-  // COST NOTE: this is one Analytics API call per Short per day (§6.1-style
-  // spec-literal implementation). At meaningful scale (hundreds of published
-  // Shorts per org) this should batch multiple video IDs into a single
-  // `filters=video==id1,id2,...` call instead. Flagged, not solved, here.
+  // PR 13 (§17 follow-up): previously fanned out one job — and one
+  // YouTube Analytics API call — per Short. Now groups Shorts by channel
+  // (the API call is authenticated as one channel owner's token, so only
+  // same-channel Shorts can share a request) and chunks each channel's
+  // video IDs into ANALYTICS_BATCH_SIZE-sized batches, so a channel with
+  // e.g. 45 published Shorts costs 2 API calls today instead of 45.
   @Cron('0 3 * * *')
   async dailySyncAllPublished(): Promise<void> {
     const shorts = await this.prisma.client.short.findMany({
@@ -50,26 +70,60 @@ export class AnalyticsService {
         status: ShortStatus.PUBLISHED,
         updatedAt: { gte: subDays(new Date(), ANALYTICS_RETENTION_DAYS) },
       },
-      select: { id: true, organizationId: true },
+      select: {
+        id: true,
+        organizationId: true,
+        channelId: true,
+        youtubeVideoId: true,
+        channel: { select: { userId: true } },
+      },
     });
 
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const byChannel = new Map<
+      string,
+      { organizationId: string; userId: string; items: { shortId: string; youtubeVideoId: string }[] }
+    >();
 
     for (const s of shorts) {
-      await this.analyticsQueue.add(
-        'sync',
-        { shortId: s.id, organizationId: s.organizationId, daysBack: 3 },
-        {
-          // Date-scoped jobId: re-running the cron the same day is a no-op;
-          // tomorrow's run gets a fresh jobId and actually re-syncs.
-          jobId: `analytics-sync-daily_${s.id}_${todayKey}`,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 60_000 },
-        },
-      );
+      if (!s.youtubeVideoId) continue; // shouldn't happen for PUBLISHED, but guard rather than crash the cron
+      const group = byChannel.get(s.channelId) ?? {
+        organizationId: s.organizationId,
+        userId: s.channel.userId,
+        items: [] as { shortId: string; youtubeVideoId: string }[],
+      };
+      group.items.push({ shortId: s.id, youtubeVideoId: s.youtubeVideoId });
+      byChannel.set(s.channelId, group);
     }
 
-    this.logger.log({ msg: 'analytics.daily_sync_enqueued', count: shorts.length });
+    const todayKey = new Date().toISOString().slice(0, 10);
+    let batchCount = 0;
+
+    for (const [channelId, group] of byChannel) {
+      const batches = chunk(group.items, ANALYTICS_BATCH_SIZE);
+      for (const [index, items] of batches.entries()) {
+        await this.analyticsQueue.add(
+          'batch-sync',
+          { organizationId: group.organizationId, channelId, userId: group.userId, items, daysBack: 3 },
+          {
+            // Date + channel + chunk-index-scoped jobId: re-running the
+            // cron the same day is a no-op; a channel needing multiple
+            // batches gets one distinct job per chunk; tomorrow's run
+            // gets fresh jobIds and actually re-syncs.
+            jobId: `analytics-sync-daily-batch_${channelId}_${index}_${todayKey}`,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 60_000 },
+          },
+        );
+        batchCount++;
+      }
+    }
+
+    this.logger.log({
+      msg: 'analytics.daily_sync_enqueued',
+      shortCount: shorts.length,
+      channelCount: byChannel.size,
+      batchCount,
+    });
   }
 
   // GET /analytics/overview — §17.2 metric definitions, org-scoped.

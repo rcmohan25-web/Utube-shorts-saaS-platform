@@ -1,7 +1,7 @@
 # YouTube Shorts Automation & SaaS Platform
 
 This repo is the implementation of the roadmap/SRS/architecture docs.
-Status below reflects three combined milestones shipped back to back:
+Status below reflects five combined milestones shipped back to back:
 
 - **PR 10 — Agency White-Label Features** (§15.2, Phase 6): client
   sub-organizations, an agency health/usage dashboard, org-scoped API
@@ -10,30 +10,39 @@ Status below reflects three combined milestones shipped back to back:
 - **PR 11 — Audit Log Admin UI** (§9.4 follow-up): the compliance trail
   PR 9 started writing and PR 10 extended is now readable from the
   product — filterable, cursor-paginated.
-- **PR 12 — Full White-Label Branding Pass** (§15.2, README "Next up"
-  #1): `Organization.logoS3Key` / `brandColor` have existed in the schema
-  since the very first migration but nothing ever read them. This PR
-  wires them into the app shell, every outbound email, and every newly
-  rendered Short's caption/overlay — and hides "Powered by Shorts Pilot"
-  everywhere once an org is Agency+. **This is now packaged as a
-  complete, drop-in file set — see `SETUP_INSTRUCTIONS_PR12.md`.**
+- **PR 12 — Full White-Label Branding Pass** (§15.2): `Organization.logoS3Key`
+  / `brandColor` have existed in the schema since the very first
+  migration but nothing ever read them. This PR wires them into the app
+  shell, every outbound email, and every newly rendered Short's
+  caption/overlay — and hides "Powered by Shorts Pilot" everywhere once
+  an org is Agency+.
+- **PR 13 — Analytics API Call Batching** (§17 follow-up): the daily
+  analytics-sync cron previously made one YouTube Analytics API call per
+  published Short. It now groups Shorts by channel and batches them into
+  YouTube's multi-video `filters=video==id1,id2,...` requests, cutting
+  API call volume from O(Shorts) to O(Shorts / 40) per channel per day.
+- **PR 14 — Per-API-Key Rate Limiting + Scoping** (§15.2 follow-up): the
+  public API's `external` throttle bucket is now tracked per API key
+  instead of per IP, and every API key carries a `READ_ONLY` /
+  `READ_WRITE` scope — write routes reject read-only keys outright.
 
 > Paste URL → DB row → job dispatched → video downloaded & audio
 > extracted → transcribed with word timestamps → GPT-4o scores candidate
 > clips → human approves one → render-worker crops/captions/encodes it
-> **with this org's own brand color burned into the captions and its logo
-> overlaid in the corner** → "Shorts ready" notification (**sent from a
-> branded email with this org's logo and color**) → human approves →
+> with this org's own brand color burned into the captions and its logo
+> overlaid in the corner → "Shorts ready" notification (sent from a
+> branded email with this org's logo and color) → human approves →
 > quota check (§13.2) → schedule → publish-worker uploads it to YouTube →
-> "Short published" notification → daily analytics sync → Stripe
+> "Short published" notification → daily analytics sync, now batched per
+> channel instead of firing one YouTube API call per Short → Stripe
 > subscription drives plan/quota → 80%/95% quota or payment-failure
 > alerts → admins manage teammates from `/settings/users` → an
 > Agency-plan org creates client sub-organizations from `/agency`, issues
-> API keys from `/settings/api-keys`, bulk-imports a CSV of URLs, reviews
-> `/settings/audit-log` — **and now: any org, on any plan, can upload a
-> logo and set a brand color from `/settings/branding`, and Agency+ orgs
-> additionally see "Powered by Shorts Pilot" disappear from the sidebar
-> and every email footer.**
+> **scoped** API keys from `/settings/api-keys` (rate-limited per key,
+> not per IP), bulk-imports a CSV of URLs, reviews `/settings/audit-log`
+> — and any org, on any plan, can upload a logo and set a brand color
+> from `/settings/branding`, with Agency+ orgs seeing "Powered by Shorts
+> Pilot" disappear from the sidebar and every email footer.
 
 ## What's built
 
@@ -45,27 +54,29 @@ Status below reflects three combined milestones shipped back to back:
 | Notifications (email/in-app/Slack), team invites, `/settings/users` | ✅ |
 | `AuditLogService.record()` wired into every destructive action | ✅ |
 | Named throttle buckets, `InternalSecretGuard`, tenant-isolation regression suite | ✅ |
-| `packages/shared/feature-flags.ts` (`FLAGS`) — plan-gated feature policy | ✅ **PR 10** |
-| `apps/api` — `FeatureGuard` / `@Feature(...)` | ✅ **PR 10** |
-| `apps/api` — `AgencyModule`, `ApiKeysModule`, `PublicApiModule`, CSV bulk import | ✅ **PR 10** |
-| `apps/web` — `/agency`, `/settings/api-keys` | ✅ **PR 10** |
-| `apps/api` — `AuditLogService.query()` cursor pagination + filters | ✅ **PR 11** |
-| `apps/api` — `AuditLogController` (`GET /audit-log`, `GET /audit-log/actions`) | ✅ **PR 11** |
-| `apps/web` — `/settings/audit-log` filter bar + paginated table | ✅ **PR 11** |
-| `apps/api` — `StorageService.getPresignedUploadUrl()` — direct-to-storage logo upload | ✅ **PR 12** |
-| `apps/api` — `OrganizationsService`: `updateBranding()` extended (brandColor/logoS3Key), `requestLogoUploadUrl()`, `getPublicBranding()` | ✅ **PR 12** |
-| `apps/api` — `GET/PUT /organizations/branding`, `POST /organizations/branding/logo-upload-url` | ✅ **PR 12** |
-| `apps/api` — `EmailService` renders every outbound email with the sending org's logo/color and conditionally drops the "Powered by" footer | ✅ **PR 12** |
-| `apps/api` — `NotificationsService.brandingFor()` resolves org branding once per `send()` call | ✅ **PR 12** |
-| `services/render-worker` — `caption_generator.py` burns the org's `brandColor` into the ASS Highlight style (word-pop captions) | ✅ **PR 12** |
-| `packages/shared/src/branding.ts` — `OrganizationBranding` type shared by API and web | ✅ **PR 12** |
-| `apps/web` — `useBranding()` hook, `<PoweredByFooter/>`, `/settings/branding` (logo upload + color picker) | ✅ **PR 12** |
-| `apps/web` — app shell shows this org's logo/name instead of the hardcoded wordmark | ✅ **PR 12** |
+| `packages/shared/feature-flags.ts` (`FLAGS`) — plan-gated feature policy | ✅ PR 10 |
+| `apps/api` — `FeatureGuard` / `@Feature(...)` | ✅ PR 10 |
+| `apps/api` — `AgencyModule`, `ApiKeysModule`, `PublicApiModule`, CSV bulk import | ✅ PR 10 |
+| `apps/web` — `/agency`, `/settings/api-keys` | ✅ PR 10 |
+| `apps/api` — `AuditLogService.query()` cursor pagination + filters | ✅ PR 11 |
+| `apps/api` — `AuditLogController` (`GET /audit-log`, `GET /audit-log/actions`) | ✅ PR 11 |
+| `apps/web` — `/settings/audit-log` filter bar + paginated table | ✅ PR 11 |
+| `apps/api` — `StorageService.getPresignedUploadUrl()` — direct-to-storage logo upload | ✅ PR 12 |
+| `apps/api` — `OrganizationsService`: branding CRUD, `requestLogoUploadUrl()`, `getPublicBranding()` | ✅ PR 12 |
+| `apps/api` — `EmailService` renders every outbound email with the sending org's logo/color | ✅ PR 12 |
+| `services/render-worker` — `caption_generator.py` burns the org's `brandColor` into captions | ✅ PR 12 |
+| `apps/web` — `useBranding()`, `<PoweredByFooter/>`, `/settings/branding` | ✅ PR 12 |
+| `apps/api` — `YoutubeAnalyticsService.fetchDailyMetricsBatch()` — one call, many videos | ✅ PR 13 |
+| `apps/api` — `AnalyticsSyncProcessor` handles both `sync` (single) and `batch-sync` (per-channel) jobs | ✅ PR 13 |
+| `apps/api` — `AnalyticsService.dailySyncAllPublished()` groups by channel + chunks into 40-video batches | ✅ PR 13 |
+| `packages/db` — `ApiKey.scope` (`READ_ONLY` / `READ_WRITE`), `ApiKeyScope` enum | ✅ PR 14 |
+| `apps/api` — `ApiKeyThrottlerGuard` — per-API-key rate limiting (replaces per-IP for `sk_live_...` requests) | ✅ PR 14 |
+| `apps/api` — `ApiKeyScopeGuard` + `@RequireScope()` — enforces read/write scope on the public API | ✅ PR 14 |
+| `apps/web` — `/settings/api-keys` scope picker on create + scope badge in the list | ✅ PR 14 |
 | Custom domain per client (`client.brand.com`) | ⏳ not started — DNS/Vercel infra, out of scope for app code |
 | Branded PDF/CSV exports, branded onboarding emails beyond the invite email | ⏳ not started |
 | Consolidated agency billing | ⏳ not started |
-| Per-API-key rate limiting / scoping | ⏳ not started |
-| Analytics API call batching | ⏳ not started |
+| Fine-grained (per-resource) API key permissions | ⏳ not started |
 | Audit log CSV/JSON export, `ipAddress` capture, real-time updates | ⏳ not started |
 
 ## Run it locally
@@ -82,11 +93,10 @@ cp services/clip-worker/.env.example services/clip-worker/.env
 cp services/transcription-worker/.env.example services/transcription-worker/.env
 cp services/render-worker/.env.example services/render-worker/.env
 cp services/publish-worker/.env.example services/publish-worker/.env
-# No new env vars for PR 12 — branding reuses S3_BUCKET/S3_ENDPOINT/
-# AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, already required for renders.
+# No new env vars for PR 13 or PR 14.
 
 pnpm --filter @shorts/db generate
-pnpm --filter @shorts/db migrate:dev   # no new migration in PR 12 — logoS3Key/brandColor already exist
+pnpm --filter @shorts/db migrate:dev   # PR 14 adds one migration: ApiKeyScope + ApiKey.scope
 pnpm --filter @shorts/db seed
 
 stripe listen --forward-to localhost:3001/api/v1/billing/webhook   # only if testing billing
@@ -94,109 +104,115 @@ stripe listen --forward-to localhost:3001/api/v1/billing/webhook   # only if tes
 pnpm dev
 ```
 
-For the exact copy/apply steps for PR 12 specifically (as opposed to a
-fresh clone), see **`SETUP_INSTRUCTIONS_PR12.md`** in this package — it
-now ships as a complete, drop-in file set (every file listed is a full
-replacement, not a diff/patch) under a mirrored directory tree
-(`apps/api/...`, `apps/web/...`, `packages/shared/...`,
-`services/render-worker/...`).
+For the exact copy/apply and test steps for each PR, see
+**`SETUP_INSTRUCTIONS_PR13.md`** and **`SETUP_INSTRUCTIONS_PR14.md`** in
+this package. Apply PR 13 before PR 14 if starting from an older
+checkout — PR 14's file set assumes PR 13's analytics files are already
+in place (they don't conflict, but PR 14 doesn't re-ship them).
 
-## Trying out PR 12 (branding)
+## Why these specific choices (PR 13)
 
-The seeded demo org (`admin@dev.local` / `password123`) works immediately
-— branding is **not** plan-gated, only the "Powered by" removal is:
+**Batches are grouped by channel, not by organization.** The YouTube
+Analytics API call is authenticated with one channel owner's OAuth access
+token (`YoutubeTokenService.getValidAccessToken(userId)`), and
+`channel==MINE` in the request scopes results to that one channel. Two
+Shorts on different channels — even in the same org — can never share a
+request, so `channelId` is the grouping key, with `channel.userId`
+carried alongside it as the token lookup.
 
-1. Log in, go to `/settings/branding`.
-2. Upload a logo (PNG/JPEG/SVG/WebP) — it appears in the sidebar within a
-   few seconds (the upload flow is presign → PUT to S3/R2 → confirm).
-3. Pick a brand color and save it. Notice the "White-label status" card:
-   on `STARTER` it says the footer still shows.
-4. Approve a clip and let it render (or check an existing rendered Short)
-   — the word-pop captions' highlighted word now uses your brand color
-   instead of the default yellow.
-5. Trigger any email notification (e.g. reject then re-approve a clip to
-   fire `SHORTS_READY`, or just check server logs — `RESEND_API_KEY` is
-   unset in dev, so emails log instead of send) and see the branded HTML
-   in the log payload.
-6. Bump the demo org to Agency (see PR 10's section below for the SQL),
-   log out/in for a fresh JWT, revisit `/settings/branding` — the
-   white-label card flips to "hidden", and the sidebar's "Powered by"
-   line disappears immediately (no relog needed, since the footer reads
-   from `/organizations/branding`, not the JWT).
+**The 24h first-sync job stays per-Short, unbatched.**
+`scheduleFirstSync()` fires once per publish, scattered across whatever
+times Shorts happen to go live — there's no natural batch boundary to
+group them into without adding a debounce window purely to shave a call
+volume that was never the actual cost driver. The daily cron re-syncing
+*every* published Short *every* day for 90 days was the O(Shorts) cost
+this PR targets; first-sync is O(publishes), which is much smaller and
+already spread out.
 
-## Why these specific choices (PR 12)
+**`fetchDailyMetrics()` is now a thin wrapper around
+`fetchDailyMetricsBatch()`**, not a separate implementation. There's
+exactly one code path that talks to the YouTube Analytics API — a
+single-video call is just a batch of size one — so there's no risk of the
+two drifting the way two independently-maintained methods eventually
+would.
 
-**Branding itself isn't plan-gated — only its removal is.** §13.3's
-onboarding flow already has "Upload branding — logo + brand color
-(skippable)" as step 2 for every new org, regardless of plan. Only
-§15.2's "Remove all 'Powered by' attribution" is Agency+-exclusive. So
-`PUT /organizations/branding` and the logo-upload flow are available to
-every authenticated Admin/Owner; `FLAGS.WHITE_LABEL(plan)` only gates
-whether the footer disappears.
+**Batch size (40) lives in two places on purpose.**
+`AnalyticsService.ANALYTICS_BATCH_SIZE` decides how big a BullMQ job to
+build; `YoutubeAnalyticsService.MAX_BATCH_VIDEO_IDS` documents what a
+single HTTP call is assumed safe to carry. They currently agree, but one
+is a queueing decision and the other is an HTTP-payload decision — they're
+allowed to diverge later without a hidden coupling.
 
-**Email logos are never presigned.** `NotificationsService.brandingFor()`
-deliberately passes `logoUrl: null` to `EmailService` and falls back to
-rendering the org name as styled text. A presigned S3/R2 GET URL expires
-in 60 minutes; an email can sit unread for a week. Shipping an
-almost-always-broken `<img>` would be worse than no logo. The app shell
-and the Short-render pipeline don't have this problem — they resolve a
-fresh presigned URL (or download the object directly) at the moment
-they're actually used. A stable public asset URL for logos is one of the
-things custom-domain support (still not started) would unlock.
+**A batch job re-checks `PUBLISHED` status per-item at fire time**, the
+same way the single-Short path always has. `processBatch()` filters out
+any Short that was re-rendered or rejected in the interim before making
+the API call.
 
-**The upload flow is presign-then-confirm, not a multipart endpoint.**
-Same shape as every other object write in this codebase: `POST
-/organizations/branding/logo-upload-url` mints a key scoped to
-`{orgId}/branding/logo-{uuid}.{ext}` and a short-lived (15 min) presigned
-PUT URL; the browser uploads directly to S3/R2; only then does the
-client call `PUT /organizations/branding` to confirm the new
-`logoS3Key`. Our API process never buffers image bytes, matching the
-pattern render-worker and every worker's S3 client already use.
+## Why these specific choices (PR 14)
 
-**Brand color reaches the render pipeline through a field that already
-existed.** `RenderProcessor` has sent `brandColor` in the render-worker
-job payload since the very first render implementation (§20.10 Day 7–10)
-— it just wasn't consumed. PR 12's actual code change on the Python side
-is two functions in `caption_generator.py` (`_hex_to_ass_color`,
-`_build_header`) and one call-site update in `main.py`. No new fields,
-no new payload shape, no coordination needed with `RenderProcessor`.
+**The throttle tracker hashes the raw key instead of resolving it to an
+`apiKeyId` via a DB call.** `ApiKeyThrottlerGuard` is registered as the
+global `APP_GUARD`, and Nest always runs global guards before any
+route-level `@UseGuards()` guard — including `ApiKeyGuard` on
+`PublicApiController`. That means `req.apiKeyId` (set by `ApiKeyGuard`)
+is never available yet when the throttler's tracker function runs. Rather
+than fight guard ordering, the throttler guard independently parses the
+`Authorization` header and hashes it — no DB lookup, no coupling to
+`ApiKeyGuard`'s execution, and it still uniquely and stably identifies
+the caller for rate-limiting purposes.
 
-**Hex-to-ASS conversion fails closed to the platform default, never to a
-render failure.** A malformed or missing `brandColor` (the overwhelming
-majority of orgs, who haven't set one) falls back to the original
-hardcoded yellow rather than raising — a cosmetic branding miss must
-never be the reason a Short fails to render.
+**Scope is a coarse two-tier enum (`READ_ONLY` / `READ_WRITE`), not
+per-resource permissions.** The public API surface today is exactly one
+write route (`POST /public/v1/videos`) and one read route
+(`GET /public/v1/videos`, §15.2's original scope). A finer-grained model
+would be speculative ahead of the API actually growing more resources.
+
+**`ApiKeyScopeGuard` is a separate guard from `ApiKeyGuard`, not folded
+into it.** `ApiKeyGuard`'s job is authentication (is this a valid,
+non-revoked key?) and stays that way; `ApiKeyScopeGuard`'s job is
+authorization (is this specific route allowed for this key's scope?).
+Keeping them separate mirrors the existing `JwtAuthGuard` / `RolesGuard`
+split (§9.2) rather than introducing a new pattern.
+
+**A missing `scope` defaults to `READ_WRITE`, at both the schema level
+(`@default(READ_WRITE)`) and the service level
+(`dto.scope ?? ApiKeyScope.READ_WRITE`).** Every key created before this
+PR could do everything the `API_ACCESS`-gated routes expose; defaulting
+to `READ_WRITE` preserves that behavior for existing keys rather than
+silently narrowing access under people's feet.
 
 ## Known follow-ups
 
 - **Custom domain per client** (`client.brand.com` via CNAME) — DNS/Vercel
   infrastructure work, not application code.
-- **Stable public logo URLs for email** — today's presign-at-render-time
-  approach works for the app shell and Short overlays but is
-  intentionally skipped for emails (see rationale above); revisit once
-  custom domains / a public CDN path exists.
-- **Branding on the invite email, weekly digest, and other system mail
-  that fires before `NotificationsService.send()`'s standard path** —
-  `notifyTeamInvite()` still sends unbranded; low priority since it's a
-  one-time, pre-membership touchpoint.
+- **Stable public logo URLs for email** — intentionally deferred; see the
+  PR 12 section below for the rationale.
+- **Branding on the invite email, weekly digest, and other pre-membership
+  system mail** — `notifyTeamInvite()` still sends unbranded.
 - **Consolidated agency billing** — child orgs bill independently.
-- **Per-API-key rate limiting** — the `external` throttle bucket is
-  per-IP (Nest's default), not per-key.
-- **No scoped API-key permissions** — a key can do everything the
-  `API_ACCESS`-gated public routes expose.
+- **Fine-grained (per-resource) API key scopes** — today's `READ_ONLY` /
+  `READ_WRITE` split is deliberately coarse; revisit once the public API
+  surface grows past its current one write + one read route.
 - **No `ipAddress` on any audit entry yet.**
 - **No audit log export** (CSV/JSON) of a filtered view.
 - **No real-time audit log updates.**
-- **Analytics API call volume at scale** — still one call per Short per
-  day (§17.1's cost note).
+- **First-sync jobs (§17.1, 24h-after-publish) remain per-Short** —
+  batching candidate only if publish-event clustering becomes a real cost
+  driver; not observed yet.
+- **Batch size for analytics sync is a static constant (40), not
+  adaptive** — no dynamic probing of YouTube's actual per-request limit.
+- **Throttle limits are still flat per bucket, not tiered by plan** — a
+  `READ_WRITE` key on a Starter org and one on an Agency org share the
+  same 120/min `external` ceiling. Per-plan throttle tiers are a natural
+  next step now that per-key tracking (PR 14) is in place to build on.
 
 ## Next up
 
 | Priority | What | Why it's next | Spec ref |
 | --- | --- | --- | --- |
 | 1 | **Custom domains + stable public logo URLs** | Unblocks branded emails and is the last major piece of §15.2's white-label promise. | §15.2 |
-| 2 | **Analytics API call batching** | Collapse per-Short daily calls into batched multi-video requests before Short volume makes the current approach costly. | §17 follow-up |
-| 3 | **Per-API-key rate limiting + scoping** | Move the `external` bucket from per-IP to per-key, and add read-only vs. write key scopes before the public API surface grows further. | §15.2 follow-up |
+| 2 | **Audit log export + `ipAddress` capture** | Compliance-adjacent gap flagged since PR 11; low effort, clear ask from anyone relying on `/settings/audit-log`. | §9.4 follow-up |
+| 3 | **Per-plan throttle tiers for the public API** | Now that limits are tracked per key (PR 14), varying the ceiling by the owning org's plan is a natural next increment. | §15.2 follow-up |
 
 ---
 
@@ -207,8 +223,7 @@ never be the reason a Short fails to render.
 `ApiKeyGuard` + `PublicApiModule`; `POST /videos/bulk-import`;
 `Organization.parentOrganizationId` + `ApiKey` model.
 
-To exercise Agency-gated features (`/agency`, `/settings/api-keys`, and
-now PR 12's white-label footer removal), bump the demo org:
+To exercise Agency-gated features, bump the demo org:
 
 ```sql
 UPDATE "Organization" SET plan = 'AGENCY', "quotaShortsPerMonth" = 999999
@@ -217,9 +232,7 @@ WHERE slug = 'demo-org';
 
 Then log out and back in — plan is baked into the JWT at issue time
 (§9.1), so a fresh access token is required for anything gated by
-`FeatureGuard`. (Branding's own white-label check in PR 12 reads live
-from `GET /organizations/branding`, not the JWT, so *that* one flips
-without a relogin.)
+`FeatureGuard`.
 
 ## PR 11 — Audit Log Admin UI (§9.4 follow-up)
 
@@ -230,74 +243,84 @@ without a relogin.)
 
 ## PR 12 — Full White-Label Branding Pass (§15.2)
 
+`StorageService.getPresignedUploadUrl()`; `OrganizationsService`
+branding extensions; `GET/PUT /organizations/branding`,
+`POST /organizations/branding/logo-upload-url`; branded `EmailService`
+HTML wrapper; `NotificationsService.brandingFor()`;
+`services/render-worker/caption_generator.py`'s hex→ASS brand-color
+conversion; `packages/shared/src/branding.ts`; `apps/web`'s
+`useBranding()`, `<PoweredByFooter/>`, `/settings/branding`. No schema
+changes (`logoS3Key`/`brandColor` existed since §5.1).
+
+## PR 13 — Analytics API Call Batching (§17 follow-up)
+
 ### What this ships
 
-- `StorageService.getPresignedUploadUrl()` — the first *write* presigned
-  URL in the codebase (every prior use was `GetObjectCommand`-only).
-- `OrganizationsService`: `updateBranding()` extended to accept
-  `brandColor` / `logoS3Key`; new `requestLogoUploadUrl()` and
-  `getPublicBranding()`.
-- `OrganizationsController`: `GET /organizations/branding` (any
-  authenticated role), `POST /organizations/branding/logo-upload-url`
-  (Admin+), `PUT /organizations/branding` (Admin+, extended DTO).
-- `EmailService`: every outbound email now renders inside a branded HTML
-  wrapper (logo-or-org-name header, brand-colored CTA button,
-  conditional "Powered by" footer).
-- `NotificationsService.brandingFor()`: resolves an org's branding once
-  per `send()` call and threads it into `EmailService`.
-- `services/render-worker/caption_generator.py`: `_hex_to_ass_color()` +
-  `_build_header()` — the word-pop caption highlight color now comes from
-  the org's `brandColor` instead of a hardcoded yellow. `main.py` passes
-  `job.brandColor` through (the field already existed in the job payload,
-  sent by `RenderProcessor` since the original render implementation —
-  this PR is the first thing that actually reads it).
-- `packages/shared/src/branding.ts`: `OrganizationBranding` type +
-  `DEFAULT_BRAND_COLOR`, exported from the shared package barrel.
-- `apps/web`: `useBranding()` hook, `<PoweredByFooter/>` component,
-  `/settings/branding` page (logo upload + color picker + white-label
-  status card), app-shell sidebar now shows the org's logo/name.
-- Tests: `apps/api/test/organizations-branding.test.js` (branding CRUD,
-  upload-URL scoping, plan-gated `whiteLabelEnabled`);
-  `services/render-worker/test_caption_generator.py` (hex→ASS color
-  conversion, including malformed-input fallback).
-
-### Packaging
-
-PR 12 is delivered as a complete, drop-in file set — **every file listed
-above is a full replacement of its target, never a diff or patch** — laid
-out in a directory tree that mirrors the monorepo exactly:
-
-```
-apps/api/src/storage/storage.service.ts
-apps/api/src/organizations/organizations.service.ts
-apps/api/src/organizations/organizations.controller.ts
-apps/api/src/organizations/organizations.module.ts
-apps/api/src/organizations/dto/update-organization-branding.dto.ts
-apps/api/src/organizations/dto/request-logo-upload.dto.ts
-apps/api/src/notifications/email.service.ts
-apps/api/src/notifications/notifications.service.ts
-apps/api/test/organizations-branding.test.js
-packages/shared/src/branding.ts
-packages/shared/src/index.ts
-services/render-worker/caption_generator.py
-services/render-worker/main.py
-services/render-worker/test_caption_generator.py
-apps/web/lib/branding.ts
-apps/web/components/powered-by-footer.tsx
-apps/web/app/(app)/settings/branding/page.tsx
-apps/web/app/(app)/layout.tsx
-```
-
-See `SETUP_INSTRUCTIONS_PR12.md` for the exact copy/apply steps.
-
-### Deliberately deferred
-
-Custom domains, stable public logo URLs for email, branding on
-pre-membership emails (team invite) — see "Known follow-ups."
+- `YoutubeAnalyticsService.fetchDailyMetricsBatch()` — one YouTube
+  Analytics API call for up to `MAX_BATCH_VIDEO_IDS` (40) video IDs,
+  using `dimensions=day,video` and `filters=video==id1,id2,...` so a
+  single response carries every video's daily rows. Returns a
+  `Map<youtubeVideoId, DailyMetrics[]>`.
+- `YoutubeAnalyticsService.fetchDailyMetrics()` is now a one-line wrapper
+  around the batch method — there is exactly one code path that talks to
+  the YouTube Analytics API.
+- `AnalyticsSyncProcessor` now branches on `job.name`:
+  - `'sync'` → `processSingle()` — unchanged behavior, still what
+    `scheduleFirstSync()` enqueues.
+  - `'batch-sync'` (new) → `processBatch()` — re-verifies each Short is
+    still `PUBLISHED`, makes one `fetchDailyMetricsBatch()` call for the
+    whole batch, and upserts `AnalyticsDaily` rows per Short/day exactly
+    as before.
+- `AnalyticsService.dailySyncAllPublished()` now groups published Shorts
+  by `channelId` (carrying the channel owner's `userId` for token
+  lookup), chunks each channel's video list into batches of
+  `ANALYTICS_BATCH_SIZE` (40), and enqueues one `'batch-sync'` job per
+  chunk instead of one `'sync'` job per Short.
+- `scheduleFirstSync()` is untouched — still enqueues a single `'sync'`
+  job per publish, 24h delayed.
+- `AnalyticsModule` and `AnalyticsController` are unchanged — no new
+  providers, no new routes; batching is invisible to the read-side API.
+- Tests: `apps/api/test/analytics-batch.test.js`.
 
 ### Migration
 
-**None.** `Organization.logoS3Key` and `Organization.brandColor` have
-existed since the very first migration (§5.1) — this PR is pure
-application code that finally reads and writes them everywhere they
-matter.
+**None.** Pure application-code change; no Prisma schema changes.
+
+## PR 14 — Per-API-Key Rate Limiting + Scoping (§15.2 follow-up)
+
+### What this ships
+
+- `ApiKeyScope` enum (`READ_ONLY`, `READ_WRITE`) and `ApiKey.scope`
+  column, defaulting to `READ_WRITE` (expand-only migration, no
+  backfill script needed).
+- `CreateApiKeyDto` accepts an optional `scope`; `ApiKeysService.create()`
+  defaults it to `READ_WRITE` when omitted, persists it, and includes it
+  in the `apikey.created` audit-log metadata. `list()` now selects
+  `scope`; `resolve()` returns the full record (including `scope`) for
+  `ApiKeyGuard` to read.
+- `ApiKeyGuard` now also attaches `req.apiKeyScope` from the resolved key.
+- New `ApiKeyScopeGuard` + `@RequireScope(ApiKeyScope.X)` decorator:
+  routes without the decorator are callable by any valid key; a
+  `READ_WRITE` key satisfies any requirement; a `READ_ONLY` key is
+  rejected with a `ForbiddenException` from any `@RequireScope(READ_WRITE)`
+  route. Applied to `PublicApiController` (`ApiKeyGuard, ApiKeyScopeGuard`,
+  in that order) with `@RequireScope(ApiKeyScope.READ_WRITE)` on
+  `POST /public/v1/videos` only.
+- New `ApiKeyThrottlerGuard extends ThrottlerGuard`, overriding
+  `getTracker()` to hash a `Bearer sk_live_...` token into an
+  `apikey:<sha256>` tracker string, falling back to the base class's
+  IP-based tracking for every other request. Registered as the global
+  `APP_GUARD` in `app.module.ts`, replacing the plain `ThrottlerGuard`.
+- `apps/web` `/settings/api-keys`: scope picker on the create form,
+  scope badge on the reveal-once card and on each listed key.
+- Tests: `apps/api/test/api-keys.test.js` (extended with scope
+  create/default/list/resolve coverage) and new
+  `apps/api/test/api-key-scope.test.js` (`ApiKeyScopeGuard`'s allow/deny
+  matrix, `ApiKeyGuard`'s attachment of `apiKeyScope`, and
+  `ApiKeyThrottlerGuard`'s tracker hashing/fallback behavior).
+
+### Migration
+
+One expand-only migration: `ApiKeyScope` enum + `ApiKey.scope` column
+with a `READ_WRITE` default. Safe to run while the app is live; no
+backfill needed since the column default handles existing rows.
