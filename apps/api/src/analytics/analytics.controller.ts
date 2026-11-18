@@ -4,6 +4,11 @@ import { TenantInterceptor } from '../common/interceptors/tenant.interceptor';
 import type { AuthenticatedRequest } from '../common/decorators/current-user.decorator';
 import { AnalyticsService } from './analytics.service';
 
+// PR 13 note: no changes here. Batching is an internal implementation
+// detail of how AnalyticsService.dailySyncAllPublished() populates
+// AnalyticsDaily rows — the read-side API (overview, per-Short series)
+// is unaffected and unaware batching exists.
+//
 // Default window: last 7 days, matching /dashboard's default (§11.1) —
 // callers pass ?from=&to= for the 7d/30d/90d/custom presets on §11.5.
 function parseRange(from?: string, to?: string) {

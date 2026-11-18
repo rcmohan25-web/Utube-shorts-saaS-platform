@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 
@@ -27,6 +27,8 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
 import { PublicApiModule } from './public-api/public-api.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+// PR 14 (§15.2 follow-up: per-API-key rate limiting)
+import { ApiKeyThrottlerGuard } from './common/guards/api-key-throttler.guard';
 
 @Module({
   imports: [
@@ -40,9 +42,9 @@ import { RolesGuard } from './common/guards/roles.guard';
             : { target: 'pino-pretty', options: { singleLine: true } },
       },
     }),
-    // PR 10 adds 'external' — a fourth named bucket for the public API
-    // (§15.2), distinct from 'internal' (our own trusted workers). Per-IP
-    // like the other buckets; per-API-key throttling is a follow-up.
+    // 'external' — the public API bucket (§15.2). As of PR 14 it's
+    // tracked per API key (see ApiKeyThrottlerGuard below) instead of per
+    // IP; the named-bucket limits themselves are unchanged from PR 10.
     ThrottlerModule.forRoot([
       { name: 'default', ttl: 60_000, limit: 100 },
       { name: 'internal', ttl: 60_000, limit: 300 },
@@ -75,7 +77,14 @@ import { RolesGuard } from './common/guards/roles.guard';
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // PR 14: ApiKeyThrottlerGuard replaces the plain ThrottlerGuard.
+    // Behaviorally identical to ThrottlerGuard for every JWT-authenticated
+    // route (falls back to IP-based tracking) — the only change is that
+    // requests bearing an `Authorization: Bearer sk_live_...` header are
+    // tracked by a hash of that key instead of the caller's IP. See that
+    // guard's file comment for why this can't be implemented by relying
+    // on ApiKeyGuard's req.apiKeyId (guard execution ordering).
+    { provide: APP_GUARD, useClass: ApiKeyThrottlerGuard },
   ],
 })
 export class AppModule {}

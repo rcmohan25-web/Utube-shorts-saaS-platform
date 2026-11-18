@@ -7,6 +7,11 @@ import { ApiKeysService } from '../../api-keys/api-keys.service';
 // organizationId, attached onto the request the same way TenantInterceptor
 // attaches it for JWT-authenticated routes so downstream services never
 // need to know which auth mechanism was used.
+//
+// PR 14 (§15.2 follow-up: per-API-key scoping): also attaches
+// req.apiKeyScope from the resolved key record. ApiKeyScopeGuard —
+// registered right after this guard on PublicApiController — reads it to
+// enforce @RequireScope() on write-capable routes.
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
   constructor(private apiKeys: ApiKeysService) {}
@@ -25,6 +30,7 @@ export class ApiKeyGuard implements CanActivate {
 
     req.organizationId = record.organizationId;
     req.apiKeyId = record.id;
+    req.apiKeyScope = record.scope;
     return true;
   }
 }
